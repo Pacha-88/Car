@@ -80,18 +80,37 @@ It scrapes only those two sources and writes to the same database, so the
 two runs never disturb each other's data — neither retires the other's
 listings just by not having looked at them.
 
-**If a site still blocks the headless browser**, the last lever is a
-*visible* one — a real Chrome window you could watch clear the challenge:
+**If a site still shows a challenge**, the last lever is a *visible*
+browser you can help:
 
 ```
-CAR_TRACKER_HEADED=1 car-tracker scrape-local
+CAR_TRACKER_HEADED=1 ~/Desktop/scrape-local.command
 ```
 
-The one-click scripts run headless; set that variable before them (or edit
-the script's run line) if you need the visible fallback. These are
-enterprise-grade defenses, so this is best-effort — if even a visible
-browser is refused, that site may simply not be scriptable from your
+A real Chrome window opens on the page. If it asks you to verify you're
+human, **solve it in that window** — the run waits up to two minutes for
+you, and because the browser uses a persistent profile, the clearance
+cookie it earns is reused by later *headless* runs. So this is normally a
+one-time thing per site, not a permanent manual step.
+
+These are enterprise-grade defenses, so it stays best-effort: if even a
+visible browser is refused, that site may not be scriptable from your
 setup, and the dashboard keeps working with the other sources.
+
+### Why these two sources are pickier than the others
+
+Worth knowing when reading a failure, because the two look alike in the
+log but need opposite responses:
+
+- **Tesla.com** answered `HTTP 429` — a *rate limit*, not a refusal. This
+  source used to fire six model/market combos with no pacing at all, which
+  is what provoked it. Requests are now spaced out, `Retry-After` is
+  honoured, and 429s get a long backoff. A 429 means "slow down", so the
+  answer is patience, never more force.
+- **Használtautó.hu** answered with a Cloudflare *challenge* to a
+  browser-fingerprinted request, and a hard block to the plain headless
+  shell. That's a "prove you're a browser" wall, which is why the fetch
+  path escalates to a real Chrome and, if needed, a visible one.
 
 ### One-click setup (recommended)
 

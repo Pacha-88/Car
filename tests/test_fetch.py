@@ -202,3 +202,52 @@ def test_browser_launch_prefers_real_chrome_then_falls_back(monkeypatch):
     )
     assert context is not None
     assert tried == ["chrome", None]  # real Chrome first, then bundled
+
+
+def test_retry_after_header_overrides_the_fixed_backoff(monkeypatch):
+    """A server that says how long to wait knows better than a fixed curve -
+    Tesla's API rate-limits bursts and answers 429."""
+    waits = []
+    calls = {"n": 0}
+
+    class _Resp:
+        def __init__(self, status, headers):
+            self.status_code = status
+            self.text = "rate limited"
+            self.headers = headers
+
+    def _fake_get(url, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _Resp(429, {"Retry-After": "20"})
+        return _Resp(200, {})
+
+    import types
+
+    fake_cffi = types.ModuleType("curl_cffi")
+    fake_cffi.requests = types.SimpleNamespace(get=_fake_get)
+    monkeypatch.setitem(__import__("sys").modules, "curl_cffi", fake_cffi)
+    monkeypatch.setattr(fetch.time, "sleep", lambda s: waits.append(s))
+
+    fetch._fetch_with_impersonation("https://example.com", accept_language="en", timeout=5)
+    assert waits == [20], f"should wait the server's 20s, not the default curve; got {waits}"
+
+
+def test_absurd_retry_after_is_capped(monkeypatch):
+    """A server asking for an hour must not stall the whole daily run."""
+    waits = []
+
+    class _Resp:
+        status_code = 429
+        text = "rate limited"
+        headers = {"Retry-After": "86400"}
+
+    import types
+
+    fake_cffi = types.ModuleType("curl_cffi")
+    fake_cffi.requests = types.SimpleNamespace(get=lambda url, **kw: _Resp())
+    monkeypatch.setitem(__import__("sys").modules, "curl_cffi", fake_cffi)
+    monkeypatch.setattr(fetch.time, "sleep", lambda s: waits.append(s))
+
+    fetch._fetch_with_impersonation("https://example.com", accept_language="en", timeout=5)
+    assert waits and max(waits) <= fetch._MAX_RETRY_AFTER_SECONDS

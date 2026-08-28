@@ -59,9 +59,20 @@ _CHALLENGE_MARKERS = ("just a moment", "checking your browser", "cf-challenge", 
 _BLOCK_MARKERS = ("you have been blocked", "access denied", "attention required")
 
 # 429/503 are "slow down", not "go away" - worth a backed-off retry before
-# spending a browser launch on them.
+# spending a browser launch on them. Tesla's inventory API answers a burst
+# of requests this way, and the first live run showed every Tesla combo
+# getting one; the waits below are long because a rate limit measured in
+# seconds is not worth failing a daily run over.
 _RETRYABLE_STATUS = (429, 503)
-_IMPERSONATION_RETRIES = 3
+_IMPERSONATION_RETRIES = 4
+_BACKOFF_SECONDS = (5, 15, 30)  # one per retry after the first attempt
+_MAX_RETRY_AFTER_SECONDS = 60  # honour the server's own number, but stay bounded
+
+# How long to keep re-reading a challenge page before giving up. Headless
+# has only the automatic clear to wait for; headed has a person who can
+# click a checkbox, which is worth waiting properly for.
+_AUTO_SOLVE_SECONDS = 12
+_HEADED_SOLVE_SECONDS = 120
 
 # Removes the `navigator.webdriver === true` tell. Belt-and-suspenders with
 # the --disable-blink-features launch flag, which unsets it at the source.
@@ -125,8 +136,17 @@ def _fetch_with_impersonation(url: str, *, accept_language: str, timeout: float)
         last = (response.status_code, response.text)
         if response.status_code not in _RETRYABLE_STATUS:
             return last
-        if attempt < _IMPERSONATION_RETRIES - 1:
-            time.sleep(2 ** attempt)  # 1s, 2s
+        if attempt >= len(_BACKOFF_SECONDS):
+            break
+        # A server that says how long to wait knows better than a fixed curve.
+        retry_after = response.headers.get("Retry-After") if hasattr(response, "headers") else None
+        wait = _BACKOFF_SECONDS[attempt]
+        if retry_after:
+            try:
+                wait = min(max(float(retry_after), wait), _MAX_RETRY_AFTER_SECONDS)
+            except ValueError:
+                pass  # a date-formatted Retry-After; the fixed curve is fine
+        time.sleep(wait)
     return last
 
 
@@ -187,13 +207,27 @@ def _fetch_with_browser(url: str, *, accept_language: str, timeout: float) -> tu
             response = page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
             status = response.status if response else 0
             body = page.content()
-            if looks_unusable(status, body):
-                # A Cloudflare challenge takes a few seconds of JS to clear;
-                # wait, then re-read. wait_for_timeout keeps the JS running.
-                page.wait_for_timeout(9000)
+            if not looks_unusable(status, body):
+                return status, body
+
+            # A challenge clears itself after a few seconds of JS. In headed
+            # mode there's a person at the keyboard, so wait long enough for
+            # them to click a checkbox too - and say so, since an unexplained
+            # browser window is just confusing. Either way the cleared cookie
+            # lands in the persistent profile and serves later runs.
+            if headed:
+                print(
+                    f"\n  A browser window is open on {url}\n"
+                    "  If it shows a 'verify you are human' check, solve it there - this waits up to"
+                    f" {_HEADED_SOLVE_SECONDS}s, and the result is remembered for future runs.\n",
+                    flush=True,
+                )
+            deadline = time.monotonic() + (_HEADED_SOLVE_SECONDS if headed else _AUTO_SOLVE_SECONDS)
+            while time.monotonic() < deadline:
+                page.wait_for_timeout(1500)
                 body = page.content()
                 if not looks_unusable(200, body):
-                    status = 200
+                    return 200, body
             return status, body
         finally:
             context.close()

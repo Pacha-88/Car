@@ -16,6 +16,7 @@ tesla.com at all by IP-reputation-based bot defense, see README).
 from __future__ import annotations
 
 import json
+import time
 from datetime import date, datetime
 from urllib.parse import urlencode
 
@@ -30,6 +31,13 @@ INVENTORY_URL = "https://www.tesla.com/inventory/api/v4/inventory-results"
 
 MODEL_CODES = {"model_y": "my", "model_3": "m3"}
 PAGE_SIZE = 50
+
+# This source used to fire every page of every market back to back with no
+# pacing at all - six model/market combos in a burst - and the first live
+# run answered with HTTP 429 on all of them. Tesla's inventory API is not
+# refusing this project, it is rate-limiting a burst, so the fix is to stop
+# bursting rather than to try harder.
+REQUEST_DELAY_SECONDS = 3.0
 
 # A representative point per market — Tesla's search wants a lat/lng/zip even
 # for a market-wide query. Capital cities + range=0: confirmed this returns
@@ -80,7 +88,11 @@ class TeslaSource(Source):
 
     def _iter_pages(self, model: str, country: str):
         offset = 0
+        first = True
         while True:
+            if not first:
+                time.sleep(REQUEST_DELAY_SECONDS)
+            first = False
             data = self.fetch_raw_page(model=model, country=country, offset=offset)
             results = data.get("results", [])
             total = data.get("total_matches_found", len(results))

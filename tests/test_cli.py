@@ -61,6 +61,9 @@ def isolated_db(tmp_path, monkeypatch):
     db_url = f"sqlite:///{tmp_path}/scrape_all.db"
     monkeypatch.setenv("DATABASE_URL", db_url)
     init_db(get_engine(db_url))
+    # The real run paces itself between combos to avoid rate limits; tests
+    # exercise the ordering, not the waiting.
+    monkeypatch.setattr(cli.time, "sleep", lambda _s: None)
     return db_url
 
 

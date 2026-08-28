@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -60,6 +61,9 @@ SCRAPE_TARGETS: dict[str, dict[str, list[str]]] = {
 # connection, which serves them normally, writing to the same database the
 # scheduled run uses. See docs/DEPLOYMENT.md.
 DATACENTER_BLOCKED_SOURCES = ("tesla", "hasznaltauto")
+
+# Gap between one source/model/country combo and the next.
+COMBO_DELAY_SECONDS = 3.0
 
 
 def cmd_init_db(args: argparse.Namespace) -> None:
@@ -128,11 +132,19 @@ def _run_scrape(targets: dict[str, dict[str, list[str]]], *, max_pages: int | No
     failures: list[str] = []
     failed_sources: set[str] = set()
 
+    first_combo = True
     for source_name, target in targets.items():
         source_cls = SOURCES[source_name]
         for model in target["models"]:
             for country in target["countries"]:
                 combo = f"{source_name}/{model}/{country}"
+                # Pace the combos themselves, not just the pages within one.
+                # Each combo opens a fresh client, so per-source page delays
+                # don't span the gap between them - and six Tesla markets
+                # back to back is exactly the burst that drew HTTP 429s.
+                if not first_combo:
+                    time.sleep(COMBO_DELAY_SECONDS)
+                first_combo = False
                 try:
                     with source_cls() as source:
                         raw_listings = source.fetch_listings(model=model, country=country, max_pages=max_pages)
