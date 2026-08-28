@@ -1,0 +1,30 @@
+const eurFormatter = new Intl.NumberFormat("de-DE", {
+  style: "currency",
+  currency: "EUR",
+  maximumFractionDigits: 0,
+});
+
+export function formatEur(value: number): string {
+  return eurFormatter.format(value);
+}
+
+export function formatEurSigned(value: number): string {
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${eurFormatter.format(value)}`;
+}
+
+const numberFormatter = new Intl.NumberFormat("de-DE");
+
+export function formatNumber(value: number): string {
+  return numberFormatter.format(Math.round(value));
+}
+
+export function formatKm(value: number): string {
+  return `${numberFormatter.format(Math.round(value))} km`;
+}
+
+export function formatYearMonth(iso: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}`;
+}

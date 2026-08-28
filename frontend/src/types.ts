@@ -1,0 +1,63 @@
+export type Model = "model_y" | "model_3";
+export type ChassisGen = "legacy" | "highland" | "juniper" | null;
+export type Variant = "long_range_awd" | "performance" | "rwd" | "other" | null;
+export type SellerType = "dealer" | "private" | "tesla" | null;
+
+export interface Listing {
+  id: string;
+  source: string;
+  model: Model;
+  chassisGen: ChassisGen;
+  variant: Variant;
+  country: string;
+  modelYear: number | null;
+  firstRegistration: string | null; // ISO date
+  url: string;
+  titleRaw: string | null;
+  photoUrls: string[];
+  sellerType: SellerType;
+  location: string | null;
+  powerKw: number | null;
+  color: string | null;
+  firstSeenAt: string; // ISO datetime
+  priceEur: number;
+  mileageKm: number | null;
+  daysAtCurrentPrice: number;
+  isNew: boolean;
+}
+
+export interface ExportPayload {
+  generatedAt: string;
+  latestScrapeDate: string | null;
+  listings: Listing[];
+}
+
+export const SOURCE_LABELS: Record<string, string> = {
+  autoscout24: "AutoScout24",
+  kleinanzeigen: "Kleinanzeigen",
+  hasznaltauto: "Használtautó.hu",
+  tesla: "Tesla.com",
+};
+
+// Fixed order/hue per source - never re-assigned based on which sources are
+// present in a given filter slice (dataviz skill: "color follows the
+// entity, never its rank").
+export const SOURCE_COLOR_VAR: Record<string, string> = {
+  autoscout24: "var(--series-1)",
+  kleinanzeigen: "var(--series-2)",
+  hasznaltauto: "var(--series-3)",
+  tesla: "var(--series-4)",
+};
+
+export const VARIANT_LABELS: Record<string, string> = {
+  long_range_awd: "Long Range AWD",
+  performance: "Performance",
+  rwd: "RWD",
+  other: "Other",
+};
+
+export const CHASSIS_LABELS: Record<string, string> = {
+  legacy: "Legacy",
+  highland: "Highland",
+  juniper: "Juniper",
+};
