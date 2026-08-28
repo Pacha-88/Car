@@ -10,7 +10,7 @@ import {
   YAxis,
 } from "recharts";
 import { binnedMedianTrend } from "../lib/trend";
-import { yearColor } from "../lib/colors";
+import { yearColor, yearLegendEntries } from "../lib/colors";
 import { formatEur, formatKm, formatYearMonth } from "../lib/format";
 import { CHASSIS_LABELS, SOURCE_LABELS, VARIANT_LABELS, type Listing } from "../types";
 
@@ -43,14 +43,11 @@ export function PriceScatterChart({ listings, showTrendLine, watchlist, onToggle
         year: l.firstRegistration ? new Date(l.firstRegistration).getFullYear() : (l.modelYear ?? 0),
       }))
       .filter((p) => p.year > 0);
-    const years = withYear.map((p) => p.year);
-    const minYear = years.length ? Math.min(...years) : new Date().getFullYear();
-    const maxYear = years.length ? Math.max(...years) : new Date().getFullYear();
-    return withYear.map((p) => ({ ...p, color: yearColor(p.year, minYear, maxYear) }));
+    const maxYear = withYear.length ? Math.max(...withYear.map((p) => p.year)) : new Date().getFullYear();
+    return withYear.map((p) => ({ ...p, color: yearColor(p.year, maxYear) }));
   }, [listings]);
 
   const years = useMemo(() => [...new Set(points.map((p) => p.year))].sort(), [points]);
-  const minYear = years[0];
   const maxYear = years[years.length - 1];
 
   const trend = useMemo(
@@ -69,9 +66,11 @@ export function PriceScatterChart({ listings, showTrendLine, watchlist, onToggle
 
   return (
     <div className="rounded-lg border border-border bg-surface-1 p-4">
-      <div className="mb-2 flex items-center justify-between">
-        <div className="text-xs text-muted">Each point is a listing. Hover for detail, click to open the ad.</div>
-        {years.length > 1 && <YearLegend minYear={minYear} maxYear={maxYear} />}
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="text-xs text-muted">
+          Each point is a listing, coloured by registration year. Hover for detail, click to open the ad.
+        </div>
+        {years.length > 1 && <YearLegend years={years} maxYear={maxYear} />}
       </div>
 
       <ResponsiveContainer width="100%" height={420}>
@@ -155,20 +154,16 @@ export function PriceScatterChart({ listings, showTrendLine, watchlist, onToggle
   );
 }
 
-function YearLegend({ minYear, maxYear }: { minYear: number; maxYear: number }) {
-  const years: number[] = [];
-  for (let y = minYear; y <= maxYear; y++) years.push(y);
+function YearLegend({ years, maxYear }: { years: number[]; maxYear: number }) {
+  const entries = yearLegendEntries(years, maxYear);
   return (
-    <div className="flex items-center gap-2 text-[10px] text-muted">
+    <div className="flex shrink-0 items-center gap-2 text-[10px] text-muted">
       <span className="uppercase tracking-wide">Reg. year</span>
       <div className="flex items-center gap-1.5">
-        {years.map((y) => (
-          <span key={y} className="flex items-center gap-1">
-            <span
-              className="h-2 w-2 rounded-full"
-              style={{ backgroundColor: yearColor(y, minYear, maxYear) }}
-            />
-            {y}
+        {entries.map((e) => (
+          <span key={e.label} className="flex items-center gap-1 text-secondary">
+            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: e.color }} />
+            {e.label}
           </span>
         ))}
       </div>

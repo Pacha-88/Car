@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Area, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
   bucketTransitions,
   cheapestToOwn,
@@ -23,6 +23,16 @@ const VARIANT_TABS: { key: Variant | "all"; label: string }[] = [
 ];
 
 const MIN_BUCKET_SIZE = 10;
+
+/** "under_1yr" -> "under 1yr", "7yr_plus" -> "7yr+" - for axis space. */
+function shortLabel(label: string): string {
+  return label.replace("under_1yr", "<1yr").replace("yr_plus", "yr+");
+}
+
+/** The calendar year a bucket's cars were (roughly) registered in. */
+function bucketCalendarYear(bucketIndex: number): number {
+  return new Date().getFullYear() - bucketIndex;
+}
 
 export function DepreciationModule({ listings }: DepreciationModuleProps) {
   const [variantTab, setVariantTab] = useState<Variant | "all">("all");
@@ -55,6 +65,7 @@ export function DepreciationModule({ listings }: DepreciationModuleProps) {
   const flat = curveFlattensAt(transitions);
   const cheapest = cheapestToOwn(buckets, 3);
   const youngest = buckets.find((b) => !b.isThin) ?? buckets[0];
+  const youngestPrice = youngest?.medianPriceEur;
 
   const thinBuckets = buckets.filter((b) => b.isThin);
 
@@ -72,7 +83,8 @@ export function DepreciationModule({ listings }: DepreciationModuleProps) {
         <div>
           <h2 className="text-sm font-semibold text-primary">Depreciation by model year</h2>
           <p className="text-xs text-muted">
-            {input.length} listings · all prices adjusted to {referenceKm.toLocaleString("de-DE")} km
+            {input.length} listings · all prices adjusted to {referenceKm.toLocaleString("de-DE")} km · band = middle
+            half of each bucket (25th–75th percentile)
           </p>
         </div>
         <div className="flex gap-1">
@@ -82,7 +94,7 @@ export function DepreciationModule({ listings }: DepreciationModuleProps) {
               type="button"
               onClick={() => setVariantTab(t.key)}
               className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-                variantTab === t.key ? "bg-series-1/20 text-primary" : "text-secondary hover:text-primary"
+                variantTab === t.key ? "bg-series-1 text-white" : "text-secondary hover:text-primary"
               }`}
             >
               {t.label}
@@ -106,27 +118,57 @@ export function DepreciationModule({ listings }: DepreciationModuleProps) {
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_240px]">
         <div>
-          <ResponsiveContainer width="100%" height={280}>
-            <LineChart data={buckets} margin={{ top: 24, right: 16, bottom: 8, left: 0 }}>
+          <ResponsiveContainer width="100%" height={330}>
+            <ComposedChart data={buckets} margin={{ top: 30, right: 24, bottom: 14, left: 0 }}>
               <CartesianGrid stroke="var(--gridline)" vertical={false} />
               <XAxis
                 dataKey="label"
-                tickFormatter={(l: string) => l.replace("_", " ").replace("yr", "yr")}
+                interval={0}
                 stroke="var(--baseline)"
-                tick={{ fill: "var(--text-muted)", fontSize: 11 }}
+                tick={(props: unknown) => {
+                  const p = props as { x: number; y: number; index: number };
+                  const bucket = buckets[p.index];
+                  if (!bucket) return <g />;
+                  return (
+                    <g transform={`translate(${p.x},${p.y})`}>
+                      <text textAnchor="middle" dy={12} fill="var(--text-secondary)" fontSize={11}>
+                        {shortLabel(bucket.label)}
+                      </text>
+                      <text textAnchor="middle" dy={26} fill="var(--text-muted)" fontSize={9.5}>
+                        {bucketCalendarYear(bucket.bucketIndex)} · n={bucket.n}
+                      </text>
+                    </g>
+                  );
+                }}
+                height={44}
               />
               <YAxis
                 tickFormatter={(v: number) => `€${Math.round(v / 1000)}k`}
                 stroke="var(--baseline)"
                 tick={{ fill: "var(--text-muted)", fontSize: 11 }}
                 width={52}
+                domain={["auto", "auto"]}
               />
-              <Tooltip content={<BucketTooltip youngestPrice={youngest?.medianPriceEur} />} />
+              <Tooltip content={<BucketTooltip youngestPrice={youngestPrice} />} />
+              {/* IQR band as a range area ([low, high] dataKey), NOT a
+                  stacked pair - a stack's base layer runs from zero and
+                  drags the y-domain down to 0, squashing the curve. */}
+              <Area
+                dataKey={(b: DepreciationBucket) => [b.p25PriceEur, b.p75PriceEur]}
+                type="monotone"
+                stroke="none"
+                fill="var(--series-1)"
+                fillOpacity={0.14}
+                isAnimationActive={false}
+                legendType="none"
+                activeDot={false}
+              />
               <Line
                 dataKey="medianPriceEur"
                 type="monotone"
                 stroke="var(--series-1)"
-                strokeWidth={2}
+                strokeWidth={2.5}
+                isAnimationActive={false}
                 dot={(props: unknown) => {
                   const p = props as { cx: number; cy: number; payload: DepreciationBucket; index: number };
                   return (
@@ -141,14 +183,51 @@ export function DepreciationModule({ listings }: DepreciationModuleProps) {
                     />
                   );
                 }}
-                isAnimationActive={false}
+                label={(props: unknown) => {
+                  const p = props as { x: number; y: number; index: number };
+                  const bucket = buckets[p.index];
+                  if (!bucket) return <g />;
+                  // Edge labels anchor inward so they don't clip at the plot edges.
+                  const anchor = p.index === 0 ? "start" : p.index === buckets.length - 1 ? "end" : "middle";
+                  const pct =
+                    youngestPrice && !bucket.isThin && bucket !== youngest
+                      ? Math.round((bucket.medianPriceEur / youngestPrice) * 100)
+                      : null;
+                  return (
+                    <g key={`lbl-${p.index}`}>
+                      <text
+                        x={p.x}
+                        y={p.y - 12}
+                        textAnchor={anchor}
+                        fill={bucket.isThin ? "var(--text-muted)" : "var(--text-primary)"}
+                        fontSize={11}
+                        fontWeight={600}
+                        style={{ fontVariantNumeric: "tabular-nums" }}
+                      >
+                        {formatEur(Math.round(bucket.medianPriceEur / 100) * 100)}
+                      </text>
+                      {pct !== null && (
+                        <text
+                          x={p.x}
+                          y={p.y + 20}
+                          textAnchor="middle"
+                          fill="var(--text-muted)"
+                          fontSize={9.5}
+                          style={{ fontVariantNumeric: "tabular-nums" }}
+                        >
+                          {pct}%
+                        </text>
+                      )}
+                    </g>
+                  );
+                }}
               />
-            </LineChart>
+            </ComposedChart>
           </ResponsiveContainer>
           {thinBuckets.length > 0 && (
             <p className="mt-1 text-[10px] text-muted">
               Thin (hollow dot, n&lt;{MIN_BUCKET_SIZE}, excluded from every figure to the right):{" "}
-              {thinBuckets.map((b) => `${b.label} (n=${b.n})`).join(", ")}
+              {thinBuckets.map((b) => `${shortLabel(b.label)} (n=${b.n})`).join(", ")}
             </p>
           )}
         </div>
@@ -157,21 +236,21 @@ export function DepreciationModule({ listings }: DepreciationModuleProps) {
           {cheapest && (
             <InsightCard
               label={`Cheapest to own · ${cheapest.horizonYears}yr`}
-              headline={`buy at ${cheapest.buyAtLabel.replace("_", " ")}`}
+              headline={`buy at ${shortLabel(cheapest.buyAtLabel).replace("_", " ")}`}
               detail={`${formatEurSigned(-Math.abs(cheapest.annualCostEur))}/yr · ${formatEur(cheapest.buyPriceEur)}`}
             />
           )}
           {drop && (
             <InsightCard
               label="Steepest drop"
-              headline={`${drop.fromLabel.replace("_", " ")} → ${drop.toLabel.replace("_", " ")}`}
+              headline={`${shortLabel(drop.fromLabel)} → ${shortLabel(drop.toLabel)}`}
               detail={formatEurSigned(drop.deltaEur)}
             />
           )}
           {flat && (
             <InsightCard
               label="Curve flattens"
-              headline={`${flat.fromLabel.replace("_", " ")} → ${flat.toLabel.replace("_", " ")}`}
+              headline={`${shortLabel(flat.fromLabel)} → ${shortLabel(flat.toLabel)}`}
               detail={formatEurSigned(flat.deltaEur)}
             />
           )}
@@ -182,7 +261,7 @@ export function DepreciationModule({ listings }: DepreciationModuleProps) {
                 {transitions.map((t) => (
                   <div key={`${t.fromLabel}-${t.toLabel}`} className="flex items-center gap-2 text-[11px]">
                     <span className="w-20 shrink-0 text-secondary">
-                      {t.fromLabel.replace("_", " ")}→{t.toLabel.replace("_", " ")}
+                      {shortLabel(t.fromLabel)}→{shortLabel(t.toLabel)}
                     </span>
                     <span className="tabular text-primary">{formatEurSigned(t.deltaEur)}</span>
                   </div>
@@ -197,8 +276,8 @@ export function DepreciationModule({ listings }: DepreciationModuleProps) {
         Prices are adjusted to the compare-at mileage using one linear €/km rate fit across the current selection, so
         they move with the slider above and are not what any specific car actually sold for. This compares different
         cars on one day rather than tracking one over time, and these are asking prices, not sale prices. There is no
-        "new list price" reference here (no source in this project provides Tesla's new-car pricing) — percentages
-        below are relative to the youngest non-thin bucket, not MSRP.
+        "new list price" reference here (no source in this project provides Tesla's new-car pricing) — percentages are
+        relative to the youngest non-thin bucket, not MSRP.
       </p>
     </div>
   );
@@ -228,11 +307,19 @@ function BucketTooltip({
   const pct = youngestPrice ? Math.round((bucket.medianPriceEur / youngestPrice) * 100) : null;
   return (
     <div className="rounded-md border border-border bg-surface-1 px-2.5 py-1.5 text-xs shadow-lg">
-      <div className="font-medium text-primary">{bucket.label.replace("_", " ")}</div>
-      <div className="tabular text-secondary">
-        {formatEur(bucket.medianPriceEur)} {pct !== null && `· ${pct}%`}
+      <div className="font-medium text-primary">
+        {shortLabel(bucket.label)} · {bucketCalendarYear(bucket.bucketIndex)}
       </div>
-      <div className="text-[10px] text-muted">n={bucket.n}{bucket.isThin ? " (thin)" : ""}</div>
+      <div className="tabular text-secondary">
+        {formatEur(bucket.medianPriceEur)} {pct !== null && `· ${pct}% of youngest`}
+      </div>
+      <div className="tabular text-[10px] text-muted">
+        middle half {formatEur(bucket.p25PriceEur)} – {formatEur(bucket.p75PriceEur)}
+      </div>
+      <div className="text-[10px] text-muted">
+        n={bucket.n}
+        {bucket.isThin ? " (thin)" : ""}
+      </div>
     </div>
   );
 }

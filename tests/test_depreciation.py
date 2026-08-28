@@ -158,3 +158,28 @@ def test_cheapest_to_own_picks_lowest_annualized_cost():
 def test_cheapest_to_own_none_when_horizon_bucket_missing():
     buckets = compute_depreciation_curve(_synthetic_listings(), as_of=AS_OF, min_bucket_size=10)
     assert cheapest_to_own(buckets, horizon_years=99) is None
+
+
+def test_buckets_carry_interquartile_range():
+    buckets = compute_depreciation_curve(_synthetic_listings(), as_of=AS_OF, min_bucket_size=10)
+    for bucket in buckets:
+        # The band must bracket the median and never invert.
+        assert bucket.p25_price_eur <= bucket.median_price_eur <= bucket.p75_price_eur
+    # And on real multi-listing buckets it must have actual width (the
+    # synthetic data spreads prices within each bucket).
+    wide = [b for b in buckets if b.n >= 10]
+    assert wide, "synthetic data should produce at least one non-thin bucket"
+    assert any(b.p75_price_eur > b.p25_price_eur for b in wide)
+
+
+def test_single_listing_bucket_collapses_band_to_the_point():
+    from datetime import date
+
+    listings = [
+        (date(2025, 6, 1), 10_000, 40_000.0),
+        (date(2019, 6, 1), 90_000, 20_000.0),
+    ]
+    buckets = compute_depreciation_curve(listings, as_of=AS_OF, min_bucket_size=10)
+    for bucket in buckets:
+        assert bucket.n == 1
+        assert bucket.p25_price_eur == bucket.median_price_eur == bucket.p75_price_eur

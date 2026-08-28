@@ -26,6 +26,25 @@ export interface DepreciationBucket {
   n: number;
   medianPriceEur: number;
   isThin: boolean;
+  /** Interquartile range of the normalized prices - the chart's spread
+   * band. For n=1 both collapse to the single price (a zero-width band
+   * draws as no band, which is honest for a bucket that thin). */
+  p25PriceEur: number;
+  p75PriceEur: number;
+}
+
+/** Quartiles matching Python's statistics.quantiles(n=4, method="inclusive")
+ * so the port stays numerically in step with analysis/depreciation.py. */
+function iqr(sortedAsc: number[]): [number, number] {
+  const n = sortedAsc.length;
+  if (n < 2) return [sortedAsc[0], sortedAsc[0]];
+  const at = (p: number) => {
+    const pos = (n - 1) * p;
+    const lo = Math.floor(pos);
+    const frac = pos - lo;
+    return lo + 1 < n ? sortedAsc[lo] * (1 - frac) + sortedAsc[lo + 1] * frac : sortedAsc[lo];
+  };
+  return [at(0.25), at(0.75)];
 }
 
 export function ageInYears(firstRegistration: Date, asOf: Date): number {
@@ -73,13 +92,19 @@ export function computeDepreciationCurve(
 
   return [...byBucket.entries()]
     .sort(([a], [b]) => a - b)
-    .map(([bucketIndex, prices]) => ({
-      label: ageBucketLabel(bucketIndex, maxBucket),
-      bucketIndex,
-      n: prices.length,
-      medianPriceEur: median(prices),
-      isThin: prices.length < minBucketSize,
-    }));
+    .map(([bucketIndex, prices]) => {
+      const sorted = [...prices].sort((a, b) => a - b);
+      const [p25, p75] = iqr(sorted);
+      return {
+        label: ageBucketLabel(bucketIndex, maxBucket),
+        bucketIndex,
+        n: prices.length,
+        medianPriceEur: median(prices),
+        isThin: prices.length < minBucketSize,
+        p25PriceEur: p25,
+        p75PriceEur: p75,
+      };
+    });
 }
 
 export interface BucketTransition {

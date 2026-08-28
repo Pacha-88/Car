@@ -51,13 +51,25 @@
   --status-serious: #ec835a;
   --status-critical: #d03b3b;
 
-  /* Ordinal ramp (registration year, old -> new), safe on both surfaces */
-  --year-1: #86b6ef;
-  --year-2: #6da7ec;
-  --year-3: #3987e5;
-  --year-4: #2a78d6;
-  --year-5: #1c5cab;
-  --year-6: #184f95;
+  /* Registration-year palette: 5 DISTINCT hues (old -> new) + one muted
+     "older" bucket. Distinct rather than a one-hue ramp by explicit
+     product decision (the original tool this recreates used distinct
+     colors, and 3k+ overlapping points need identity, not magnitude).
+     Custom-optimized for this app's exact surfaces and validated with the
+     dataviz skill's validator on the all-pairs (scatter) pairlist - both
+     modes pass every hard gate: dark worst-pair CVD dE 10.4 / normal 22.2,
+     light 12.5 / 26.2. Two slots sit below 3:1 contrast vs the surface
+     (WARN): the relief obligation is met by the listing grid (the same
+     data as a table) plus each point's hover card, and every point
+     carries a 2px surface stroke. Light values are the same five hues
+     (+-10 deg) re-stepped for the light surface - re-validate BOTH modes
+     with scripts/validate_palette.js if you touch either set. */
+  --year-older: #898781;
+  --year-1: #b764d9; /* purple  - oldest distinct year */
+  --year-2: #c62301; /* red     */
+  --year-3: #ad930c; /* gold    */
+  --year-4: #007250; /* green   */
+  --year-5: #2a54c1; /* blue    - newest year */
 }
 
 :root[data-theme="light"] {
@@ -81,6 +93,14 @@
   --status-warning: #fab219;
   --status-serious: #ec835a;
   --status-critical: #d03b3b;
+
+  /* Same five hues re-stepped for the light surface (see the dark block). */
+  --year-older: #898781;
+  --year-1: #e077f3;
+  --year-2: #d23700;
+  --year-3: #c5b44e;
+  --year-4: #008268;
+  --year-5: #3a3abc;
 }
 
 * {

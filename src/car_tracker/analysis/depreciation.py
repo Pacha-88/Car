@@ -21,7 +21,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
-from statistics import median
+from statistics import median, quantiles
 
 from car_tracker.analysis.trend import Point, linear_slope
 
@@ -60,6 +60,19 @@ class DepreciationBucket:
     n: int
     median_price_eur: float
     is_thin: bool
+    # Interquartile range of the normalized prices - the chart's spread
+    # band. For n=1 both collapse to the single price (quartiles of one
+    # point aren't defined; a zero-width band draws as no band, which is
+    # honest for a bucket that thin).
+    p25_price_eur: float
+    p75_price_eur: float
+
+
+def _iqr(prices: list[float]) -> tuple[float, float]:
+    if len(prices) < 2:
+        return prices[0], prices[0]
+    q = quantiles(prices, n=4, method="inclusive")
+    return q[0], q[2]
 
 
 def compute_depreciation_curve(
@@ -81,16 +94,21 @@ def compute_depreciation_curve(
         adjusted = normalize_price(price_eur, mileage_km, reference_km=reference_km, slope_eur_per_km=slope)
         by_bucket[bucket_index].append(adjusted)
 
-    return [
-        DepreciationBucket(
-            label=age_bucket_label(bucket_index, max_bucket=max_bucket),
-            bucket_index=bucket_index,
-            n=len(prices),
-            median_price_eur=median(prices),
-            is_thin=len(prices) < min_bucket_size,
+    buckets = []
+    for bucket_index, prices in sorted(by_bucket.items()):
+        p25, p75 = _iqr(prices)
+        buckets.append(
+            DepreciationBucket(
+                label=age_bucket_label(bucket_index, max_bucket=max_bucket),
+                bucket_index=bucket_index,
+                n=len(prices),
+                median_price_eur=median(prices),
+                is_thin=len(prices) < min_bucket_size,
+                p25_price_eur=p25,
+                p75_price_eur=p75,
+            )
         )
-        for bucket_index, prices in sorted(by_bucket.items())
-    ]
+    return buckets
 
 
 @dataclass(frozen=True)
