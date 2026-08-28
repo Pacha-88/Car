@@ -77,7 +77,7 @@ def test_scrape_all_continues_past_one_failing_source_but_still_exits_nonzero(is
     )
 
     with pytest.raises(SystemExit) as exc_info:
-        cli.cmd_scrape_all(argparse.Namespace(max_pages=None))
+        cli.cmd_scrape_all(argparse.Namespace(max_pages=None, include_blocked=True))
 
     # The failing combo is named in the exit message rather than swallowed...
     assert "fake_fail/model_y/DE" in str(exc_info.value)
@@ -93,7 +93,7 @@ def test_scrape_all_exits_zero_when_every_combo_succeeds(isolated_db, monkeypatc
     monkeypatch.setattr(cli, "SOURCES", {"fake_ok": _FakeOkSource})
     monkeypatch.setattr(cli, "SCRAPE_TARGETS", {"fake_ok": {"models": ["model_y"], "countries": ["DE"]}})
 
-    cli.cmd_scrape_all(argparse.Namespace(max_pages=None))  # must not raise
+    cli.cmd_scrape_all(argparse.Namespace(max_pages=None, include_blocked=True))  # must not raise
 
     with session_scope(get_engine(isolated_db)) as session:
         stored = list(session.execute(select(Listing)).scalars())
@@ -169,7 +169,7 @@ def test_scrape_all_retires_listings_the_site_no_longer_lists(isolated_db, monke
     monkeypatch.setattr(cli, "SOURCES", {"fake_ok": _FakeOkSource})
     monkeypatch.setattr(cli, "SCRAPE_TARGETS", {"fake_ok": {"models": ["model_y"], "countries": ["DE"]}})
 
-    cli.cmd_scrape_all(argparse.Namespace(max_pages=None))
+    cli.cmd_scrape_all(argparse.Namespace(max_pages=None, include_blocked=True))
 
     assert _is_active(isolated_db, "fake_ok:old") is False, "stale listing should have been retired"
     # ...while the listing this run actually saw stays active.
@@ -187,7 +187,7 @@ def test_scrape_all_never_retires_anything_for_a_source_that_failed(isolated_db,
     monkeypatch.setattr(cli, "SCRAPE_TARGETS", {"fake_fail": {"models": ["model_y"], "countries": ["DE"]}})
 
     with pytest.raises(SystemExit):
-        cli.cmd_scrape_all(argparse.Namespace(max_pages=None))
+        cli.cmd_scrape_all(argparse.Namespace(max_pages=None, include_blocked=True))
 
     assert _is_active(isolated_db, "fake_fail:old") is True, "a failing source must never retire its own listings"
 
@@ -203,7 +203,7 @@ def test_scrape_all_does_not_retire_when_a_source_legitimately_returns_nothing_b
     monkeypatch.setattr(cli, "SOURCES", {"fake_ok": _FakeEmptySource})
     monkeypatch.setattr(cli, "SCRAPE_TARGETS", {"fake_ok": {"models": ["model_y"], "countries": ["DE"]}})
 
-    cli.cmd_scrape_all(argparse.Namespace(max_pages=None))
+    cli.cmd_scrape_all(argparse.Namespace(max_pages=None, include_blocked=True))
 
     assert _is_active(isolated_db, "fake_ok:old") is False
 
@@ -216,7 +216,7 @@ def test_retiring_one_source_leaves_other_sources_untouched(isolated_db, monkeyp
     monkeypatch.setattr(cli, "SOURCES", {"fake_ok": _FakeOkSource})
     monkeypatch.setattr(cli, "SCRAPE_TARGETS", {"fake_ok": {"models": ["model_y"], "countries": ["DE"]}})
 
-    cli.cmd_scrape_all(argparse.Namespace(max_pages=None))
+    cli.cmd_scrape_all(argparse.Namespace(max_pages=None, include_blocked=True))
 
     assert _is_active(isolated_db, "fake_ok:old") is False
     assert _is_active(isolated_db, "other:old") is True, "a source not in this run must not be touched"
@@ -236,6 +236,92 @@ def test_export_creates_missing_parent_directories(isolated_db, tmp_path):
 
     payload = json.loads(out.read_text(encoding="utf-8"))
     assert payload["listings"] == []  # empty DB, but the file is well-formed
+
+
+def test_scrape_all_skips_the_datacenter_blocked_sources_by_default(isolated_db, monkeypatch):
+    """The scheduled run must not spend every day re-failing on sources that
+    structurally cannot work from CI - that's how a real failure gets lost
+    in the noise of expected ones."""
+    attempted: list[str] = []
+
+    class _RecordingSource(_FakeOkSource):
+        def fetch_listings(self, *, model: str, country: str, max_pages: int | None = None):
+            attempted.append(self.name)
+            return []
+
+    monkeypatch.setattr(cli, "fetch_latest_rates", lambda: (date(2026, 8, 28), {"HUF": 0.0025}))
+    monkeypatch.setattr(cli, "DATACENTER_BLOCKED_SOURCES", ("blocked",))
+    monkeypatch.setattr(
+        cli,
+        "SOURCES",
+        {"reachable": type("R", (_RecordingSource,), {"name": "reachable"}),
+         "blocked": type("B", (_RecordingSource,), {"name": "blocked"})},
+    )
+    monkeypatch.setattr(
+        cli,
+        "SCRAPE_TARGETS",
+        {
+            "reachable": {"models": ["model_y"], "countries": ["DE"]},
+            "blocked": {"models": ["model_y"], "countries": ["HU"]},
+        },
+    )
+
+    cli.cmd_scrape_all(argparse.Namespace(max_pages=None, include_blocked=False))
+
+    assert attempted == ["reachable"], "the blocked source should not have been contacted"
+
+
+def test_scrape_local_runs_only_the_datacenter_blocked_sources(isolated_db, monkeypatch):
+    attempted: list[str] = []
+
+    class _RecordingSource(_FakeOkSource):
+        def fetch_listings(self, *, model: str, country: str, max_pages: int | None = None):
+            attempted.append(self.name)
+            return []
+
+    monkeypatch.setattr(cli, "fetch_latest_rates", lambda: (date(2026, 8, 28), {"HUF": 0.0025}))
+    monkeypatch.setattr(cli, "DATACENTER_BLOCKED_SOURCES", ("blocked",))
+    monkeypatch.setattr(
+        cli,
+        "SOURCES",
+        {"reachable": type("R", (_RecordingSource,), {"name": "reachable"}),
+         "blocked": type("B", (_RecordingSource,), {"name": "blocked"})},
+    )
+    monkeypatch.setattr(
+        cli,
+        "SCRAPE_TARGETS",
+        {
+            "reachable": {"models": ["model_y"], "countries": ["DE"]},
+            "blocked": {"models": ["model_y"], "countries": ["HU"]},
+        },
+    )
+
+    cli.cmd_scrape_local(argparse.Namespace(max_pages=None))
+
+    assert attempted == ["blocked"]
+
+
+def test_scheduled_run_never_retires_what_the_local_run_collected(isolated_db, monkeypatch):
+    """The two runs write to one database on different schedules. Neither
+    may retire the other's listings merely by not having looked at them -
+    that would make each run silently delete the other's work."""
+    _seed_one_listing(isolated_db, source="blocked", seen_at=datetime(2026, 1, 1))
+
+    monkeypatch.setattr(cli, "fetch_latest_rates", lambda: (date(2026, 8, 28), {"HUF": 0.0025}))
+    monkeypatch.setattr(cli, "DATACENTER_BLOCKED_SOURCES", ("blocked",))
+    monkeypatch.setattr(cli, "SOURCES", {"reachable": _FakeOkSource, "blocked": _FakeOkSource})
+    monkeypatch.setattr(
+        cli,
+        "SCRAPE_TARGETS",
+        {
+            "reachable": {"models": ["model_y"], "countries": ["DE"]},
+            "blocked": {"models": ["model_y"], "countries": ["HU"]},
+        },
+    )
+
+    cli.cmd_scrape_all(argparse.Namespace(max_pages=None, include_blocked=False))
+
+    assert _is_active(isolated_db, "blocked:old") is True
 
 
 def test_scrape_targets_only_reference_real_sources_and_models():

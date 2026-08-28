@@ -46,6 +46,21 @@ SCRAPE_TARGETS: dict[str, dict[str, list[str]]] = {
     "hasznaltauto": {"models": MODELS, "countries": ["HU"]},
 }
 
+# Sources that refuse datacenter traffic outright, so the GitHub Actions run
+# can never reach them however it presents itself. Verified 2026-08-28 from
+# two independent datacenter networks (this project's dev sandbox and the
+# Actions runner): Használtautó.hu returns Cloudflare's "Sorry, you have
+# been blocked" — the hard WAF block, not the solvable "Just a moment..."
+# JS challenge — and Tesla.com returns Akamai "Access Denied". Neither is a
+# fingerprint problem, so neither a fuller header set (see sources/http.py,
+# which did fix Kleinanzeigen) nor a real headless browser gets past them;
+# only the origin of the request matters.
+#
+# `scrape-local` therefore exists to run these two from an ordinary home
+# connection, which serves them normally, writing to the same database the
+# scheduled run uses. See docs/DEPLOYMENT.md.
+DATACENTER_BLOCKED_SOURCES = ("tesla", "hasznaltauto")
+
 
 def cmd_init_db(args: argparse.Namespace) -> None:
     init_db()
@@ -93,14 +108,16 @@ def cmd_scrape(args: argparse.Namespace) -> None:
     print(f"stored {len(raw_listings)} listings from {args.source}/{args.model}/{args.country}")
 
 
-def cmd_scrape_all(args: argparse.Namespace) -> None:
-    """Scrape every source/model/country combo this project tracks, once.
+def _run_scrape(targets: dict[str, dict[str, list[str]]], *, max_pages: int | None, label: str) -> None:
+    """Scrape every combo in `targets` once, then retire what's gone.
 
-    The daily-cron entry point (see .github/workflows/). Best-effort per
-    combo — one source failing (a site's markup changed, a temporary block)
-    doesn't stop the others from running or being stored — but every
-    failure is still surfaced (non-zero exit at the end) so it doesn't
-    decay silently into "the dashboard just quietly has less data."
+    Best-effort per combo — one source failing (a site's markup changed, a
+    temporary block) doesn't stop the others from running or being stored —
+    but every failure is still surfaced (non-zero exit at the end) so it
+    doesn't decay silently into "the dashboard just quietly has less data."
+
+    Shared by `scrape-all` and `scrape-local`, which differ only in which
+    sources they cover and therefore which ones they may retire.
     """
     rate_date, ecb_rates = fetch_latest_rates()
     rates_to_eur = {EUR: 1.0, **ecb_rates}
@@ -111,36 +128,66 @@ def cmd_scrape_all(args: argparse.Namespace) -> None:
     failures: list[str] = []
     failed_sources: set[str] = set()
 
-    for source_name, target in SCRAPE_TARGETS.items():
+    for source_name, target in targets.items():
         source_cls = SOURCES[source_name]
         for model in target["models"]:
             for country in target["countries"]:
-                label = f"{source_name}/{model}/{country}"
+                combo = f"{source_name}/{model}/{country}"
                 try:
                     with source_cls() as source:
-                        raw_listings = source.fetch_listings(model=model, country=country, max_pages=args.max_pages)
+                        raw_listings = source.fetch_listings(model=model, country=country, max_pages=max_pages)
                     with session_scope() as session:
                         for raw in raw_listings:
                             _upsert(session, raw, rates_to_eur=rates_to_eur, observed_at=now)
-                    print(f"ok    {label}: {len(raw_listings)} listings")
+                    print(f"ok    {combo}: {len(raw_listings)} listings")
                     total_stored += len(raw_listings)
                 except Exception as exc:  # noqa: BLE001 - one combo's failure must not abort the rest
-                    print(f"FAILED {label}: {exc}")
-                    failures.append(label)
+                    print(f"FAILED {combo}: {exc}")
+                    failures.append(combo)
                     failed_sources.add(source_name)
 
-    retired = _retire_unseen(now, skip_sources=failed_sources)
+    retired = _retire_unseen(now, sources=targets, skip_sources=failed_sources)
     for source_name, count in sorted(retired.items()):
         print(f"retired {source_name}: {count} listing(s) no longer on the site")
     for source_name in sorted(failed_sources):
         print(f"kept    {source_name}: not retiring anything, this source had failing combo(s) this run")
 
-    print(f"scrape-all done: {total_stored} listings stored across {len(SCRAPE_TARGETS)} sources, {len(failures)} combo(s) failed")
+    print(f"{label} done: {total_stored} listings stored across {len(targets)} sources, {len(failures)} combo(s) failed")
     if failures:
         raise SystemExit(f"failed combos: {', '.join(failures)}")
 
 
-def _retire_unseen(run_started_at: datetime, *, skip_sources: set[str]) -> dict[str, int]:
+def cmd_scrape_all(args: argparse.Namespace) -> None:
+    """Every source the scheduled run can actually reach (see .github/workflows/).
+
+    Skips DATACENTER_BLOCKED_SOURCES by default: including them would mean
+    a permanently red daily run and a log full of expected 403s, which is
+    how a real failure gets missed. Those are `scrape-local`'s job.
+    """
+    targets = {
+        name: target
+        for name, target in SCRAPE_TARGETS.items()
+        if args.include_blocked or name not in DATACENTER_BLOCKED_SOURCES
+    }
+    if not args.include_blocked:
+        print(f"skipping {', '.join(DATACENTER_BLOCKED_SOURCES)} - datacenter-blocked, run `car-tracker scrape-local` from home")
+    _run_scrape(targets, max_pages=args.max_pages, label="scrape-all")
+
+
+def cmd_scrape_local(args: argparse.Namespace) -> None:
+    """The sources only a home connection can reach (DATACENTER_BLOCKED_SOURCES).
+
+    Run this from an ordinary residential connection, pointed at the same
+    DATABASE_URL the scheduled run uses. It touches only its own sources,
+    so it never disturbs what the scheduled run collected — and vice versa.
+    """
+    targets = {name: SCRAPE_TARGETS[name] for name in DATACENTER_BLOCKED_SOURCES}
+    _run_scrape(targets, max_pages=args.max_pages, label="scrape-local")
+
+
+def _retire_unseen(
+    run_started_at: datetime, *, sources: dict[str, dict[str, list[str]]], skip_sources: set[str]
+) -> dict[str, int]:
     """Mark listings a completed scrape no longer found as inactive.
 
     Without this, sold and withdrawn cars accumulate forever: `_upsert`
@@ -151,6 +198,10 @@ def _retire_unseen(run_started_at: datetime, *, skip_sources: set[str]) -> dict[
     A listing is retired when its `last_seen_at` predates this run — every
     listing the run *did* see was just stamped with `run_started_at`.
 
+    Only the sources this run actually covered are considered, so the
+    scheduled run never retires what `scrape-local` collected (or the
+    reverse) just by not having looked at it.
+
     Sources with any failing combo are skipped entirely. A blocked or
     broken source returns nothing, and "saw nothing" must never be read as
     "everything is gone" — that would wipe a whole marketplace from the
@@ -159,7 +210,7 @@ def _retire_unseen(run_started_at: datetime, *, skip_sources: set[str]) -> dict[
     """
     retired: dict[str, int] = {}
     with session_scope() as session:
-        for source_name in SCRAPE_TARGETS:
+        for source_name in sources:
             if source_name in skip_sources:
                 continue
             result = session.execute(
@@ -320,12 +371,27 @@ def build_parser() -> argparse.ArgumentParser:
     p_scrape.set_defaults(func=cmd_scrape)
 
     p_scrape_all = subparsers.add_parser(
-        "scrape-all", help="scrape every source/model/country combo this project tracks (the daily-cron entry point)"
+        "scrape-all",
+        help="scrape every source the scheduled run can reach (the daily-cron entry point)",
     )
     p_scrape_all.add_argument(
         "--max-pages", type=int, default=None, help="cap result pages fetched per combo (default: no cap)"
     )
+    p_scrape_all.add_argument(
+        "--include-blocked",
+        action="store_true",
+        help=f"also try {', '.join(DATACENTER_BLOCKED_SOURCES)} (expected to 403 from a datacenter; use to re-check whether that still holds)",
+    )
     p_scrape_all.set_defaults(func=cmd_scrape_all)
+
+    p_scrape_local = subparsers.add_parser(
+        "scrape-local",
+        help=f"scrape {', '.join(DATACENTER_BLOCKED_SOURCES)} - run from a home connection, these refuse datacenter traffic",
+    )
+    p_scrape_local.add_argument(
+        "--max-pages", type=int, default=None, help="cap result pages fetched per combo (default: no cap)"
+    )
+    p_scrape_local.set_defaults(func=cmd_scrape_local)
 
     p_export = subparsers.add_parser("export", help="dump active listings to a static JSON file for the frontend")
     p_export.add_argument("--out", required=True, help="output path, e.g. frontend/public/data/listings.json")

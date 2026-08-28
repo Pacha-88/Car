@@ -193,7 +193,8 @@ uv run car-tracker scrape --source tesla --model model_y --country DE --huf-rate
 uv run car-tracker scrape --source autoscout24 --model model_y --country AT --max-pages 2  # works today
 uv run car-tracker scrape --source kleinanzeigen --model model_y --country DE --max-pages 1  # works, but go easy on it (see README)
 uv run car-tracker scrape --source hasznaltauto --model model_y --country HU --max-pages 1  # needs network (blocked from this sandbox)
-uv run car-tracker scrape-all --max-pages 1   # every source/model/country combo in one go — what the daily workflow runs
+uv run car-tracker scrape-all --max-pages 1   # every source the scheduled run can reach — what the daily workflow runs
+uv run car-tracker scrape-local --max-pages 1 # tesla + hasznaltauto — needs a home connection, see docs/DEPLOYMENT.md
 uv run car-tracker export --out frontend/public/data/listings.json         # dumps active listings for the dashboard
 ```
 

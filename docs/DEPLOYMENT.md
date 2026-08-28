@@ -53,6 +53,65 @@ becomes relevant if you later create a `main` and move work there: at that
 point, bring this workflow file along, since the schedule follows whichever
 branch is set as default in **Settings → General → Default branch**.
 
+## The two sources that need your own machine
+
+Tesla.com and Használtautó.hu refuse datacenter traffic outright, so the
+GitHub Actions run can never reach them — verified from two independent
+datacenter networks. Használtautó.hu returns Cloudflare's *"Sorry, you have
+been blocked"* (the hard WAF block, not the solvable "Just a moment..." JS
+challenge) and Tesla.com returns Akamai *"Access Denied"*. Neither is a
+fingerprint problem: a fuller header set and a real headless browser both
+get the same page, because only the origin of the request matters.
+
+Your home connection serves both sites normally, so those two run from
+there instead:
+
+```
+car-tracker scrape-local
+```
+
+It scrapes only those two sources and writes to the same database, so the
+two runs never disturb each other's data — neither retires the other's
+listings just by not having looked at them.
+
+### One-time setup on your machine
+
+1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/).
+2. Clone the repo and `cd` into it.
+3. Put the same connection string the GitHub secret holds into a `.env`
+   file in the project root (it's gitignored):
+   ```
+   DATABASE_URL=postgresql+psycopg://postgres.xxxxx:your-password@aws-...pooler.supabase.com:6543/postgres
+   ```
+4. Run it once to check:
+   ```
+   uv run --env-file .env car-tracker scrape-local
+   ```
+
+Once it has run, the dashboard picks the data up on the next scheduled
+deploy (or trigger one manually from the Actions tab).
+
+### Running it automatically
+
+- **macOS / Linux** — `crontab -e`, then (07:00 daily, adjust the path):
+  ```
+  0 7 * * * cd /path/to/Car && /path/to/uv run --env-file .env car-tracker scrape-local >> scrape-local.log 2>&1
+  ```
+- **Windows** — Task Scheduler → Create Basic Task → Daily → Start a
+  program: `uv`, arguments `run --env-file .env car-tracker scrape-local`,
+  "Start in" set to the repo folder.
+
+It only updates while your machine is on and online. Missing a day costs
+nothing: nothing is deleted, the listings simply keep their previous
+prices until the next successful run.
+
+### If the block ever lifts
+
+`car-tracker scrape-all --include-blocked` tries them from wherever it's
+run. If that ever succeeds from CI, drop the two names from
+`DATACENTER_BLOCKED_SOURCES` in `cli.py` and the scheduled run picks them
+up again.
+
 ## Running it
 
 - **Manually, any time**: Actions tab → "Scrape and deploy dashboard" →

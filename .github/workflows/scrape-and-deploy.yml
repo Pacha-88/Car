@@ -46,13 +46,15 @@ jobs:
       - name: Ensure DB schema exists
         run: uv run car-tracker init-db
 
-      # Tolerant on purpose: Tesla and Használtautó.hu block requests from
-      # some networks at the site level (Akamai / Cloudflare bot defenses -
-      # see README), so `scrape-all` exiting non-zero because one or two of
-      # the four sources are blocked today is expected, not exceptional.
-      # Losing the whole day's dashboard refresh to that would be worse
-      # than the missing source itself, so this doesn't stop the workflow -
-      # only a *complete* failure below does.
+      # `scrape-all` skips the two sources that refuse datacenter traffic
+      # outright (Tesla.com, Használtautó.hu) - those run from a home
+      # connection via `car-tracker scrape-local`, see docs/DEPLOYMENT.md.
+      # So this step is normally green.
+      #
+      # Still tolerant on purpose: a marketplace having a bad day, or
+      # changing its markup, shouldn't cost the whole dashboard its daily
+      # refresh. A partial failure deploys whatever the other sources
+      # found; only a *complete* failure below stops the workflow.
       - name: Scrape every tracked source
         id: scrape
         continue-on-error: true
