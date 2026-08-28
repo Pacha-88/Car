@@ -42,6 +42,7 @@ import httpx
 
 from car_tracker.normalize.currency import market_currency
 from car_tracker.sources.base import RawListing, Source
+from car_tracker.sources.fetch import fetch_html
 from car_tracker.sources.http import build_client
 
 BASE_URL = "https://www.hasznaltauto.hu/szemelyauto/tesla"
@@ -97,14 +98,17 @@ class HasznaltautoSource(Source):
         return listings
 
     def fetch_raw_page(self, *, model: str, page: int = 1) -> str:
-        """One page's raw HTML — for inspecting the real response shape."""
+        """One page's raw HTML — for inspecting the real response shape.
+
+        Goes through sources/fetch.py rather than this class's httpx client:
+        Cloudflare scores the TLS handshake here, and Python's own is
+        rejected outright even from a home connection (see that module).
+        """
         if model not in MODEL_SLUGS:
             raise ValueError(f"unknown model {model!r}, expected one of {sorted(MODEL_SLUGS)}")
         slug = MODEL_SLUGS[model]
         url = f"{BASE_URL}/{slug}" if page == 1 else f"{BASE_URL}/{slug}/page{page}"
-        response = self.client.get(url)
-        response.raise_for_status()
-        return response.text
+        return fetch_html(url, accept_language="hu-HU,hu;q=0.9,en-US;q=0.8,en;q=0.7")
 
 
 def _split_listings(html: str) -> list[str]:

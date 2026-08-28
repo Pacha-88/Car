@@ -55,10 +55,28 @@ pause
 exit /b 1
 
 :run
+REM A csomag "browser" extraja a Playwright Python-oldalat hozza; a nagy
+REM (~150 MB) bongeszo-binarist NEM toltjuk le elore, csak ha egy oldal
+REM tenyleg megkoveteli. Legtobbszor a Chrome TLS-ujjlenyomat eleg.
+set "FROM_SPEC=car-tracker[browser] @ %REPO%"
+set "LOG=%~dp0scrape-local-last-run.log"
 echo.
 echo Scrape indul... (elso alkalommal 1-2 perc a letoltes, utana gyorsabb)
-uv tool run --refresh --from %REPO% car-tracker scrape-local
+uv tool run --refresh --from "%FROM_SPEC%" car-tracker scrape-local > "%LOG%" 2>&1
 set "RESULT=%ERRORLEVEL%"
+type "%LOG%"
+
+REM Ha barmelyik forras valodi bongeszot kert, telepitjuk es ujraprobaljuk.
+findstr /C:"playwright install" "%LOG%" >nul 2>nul
+if errorlevel 1 goto :after_run
+echo.
+echo Egy oldal valodi bongeszot igenyel - letoltom egyszer (~150 MB), majd ujraprobalom...
+uv tool run --from "%FROM_SPEC%" playwright install chromium
+echo.
+uv tool run --from "%FROM_SPEC%" car-tracker scrape-local > "%LOG%" 2>&1
+set "RESULT=%ERRORLEVEL%"
+type "%LOG%"
+:after_run
 
 echo.
 if not "%RESULT%"=="0" goto :had_failure

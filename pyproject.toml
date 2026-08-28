@@ -8,10 +8,20 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = [
+    # curl-cffi carries real browser TLS fingerprints. Tesla.com and
+    # Használtautó.hu reject Python's own handshake outright, headers and
+    # source IP notwithstanding - see sources/fetch.py.
+    "curl-cffi>=0.13",
     "httpx>=0.28.1",
     "psycopg[binary]>=3.2",
     "sqlalchemy>=2.0.52",
 ]
+
+[project.optional-dependencies]
+# The escalation of last resort: a real browser, which also executes the
+# JS challenge a fingerprint alone can't clear. Optional because it costs
+# a few hundred MB and most runs never need it.
+browser = ["playwright>=1.62.0"]
 
 [project.scripts]
 car-tracker = "car_tracker:main"

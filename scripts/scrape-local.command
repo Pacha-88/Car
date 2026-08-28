@@ -64,10 +64,26 @@ fi
 export DATABASE_URL
 
 # --- futtatás (mindig a repó legfrissebb kódjával) ---
+# A csomag "browser" extrája a Playwright Python-oldalát hozza; a nagy
+# (~150 MB) böngésző-binárist NEM töltjük le előre, csak ha egy oldal
+# tényleg megköveteli. Legtöbbször a Chrome TLS-ujjlenyomat elég.
+FROM_SPEC="car-tracker[browser] @ $REPO"
+LOG="$SCRIPT_DIR/scrape-local-last-run.log"
+
 echo
 echo "Scrape indul... (első alkalommal 1-2 perc a letöltés, utána gyorsabb)"
-uv tool run --refresh --from "$REPO" car-tracker scrape-local
-RESULT=$?
+uv tool run --refresh --from "$FROM_SPEC" car-tracker scrape-local 2>&1 | tee "$LOG"
+RESULT=${PIPESTATUS[0]}
+
+# Ha barmelyik forras valodi bongeszot kert, telepitjuk es ujraprobaljuk.
+if grep -q "playwright install" "$LOG" 2>/dev/null; then
+  echo
+  echo "Egy oldal valódi böngészőt igényel — letöltöm egyszer (~150 MB), majd újrapróbálom..."
+  uv tool run --from "$FROM_SPEC" playwright install chromium
+  echo
+  uv tool run --from "$FROM_SPEC" car-tracker scrape-local 2>&1 | tee "$LOG"
+  RESULT=${PIPESTATUS[0]}
+fi
 
 echo
 if [ "$RESULT" -eq 0 ]; then

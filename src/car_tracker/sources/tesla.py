@@ -17,11 +17,13 @@ from __future__ import annotations
 
 import json
 from datetime import date, datetime
+from urllib.parse import urlencode
 
 import httpx
 
 from car_tracker.normalize.currency import market_currency
 from car_tracker.sources.base import RawListing, Source
+from car_tracker.sources.fetch import fetch_json
 from car_tracker.sources.http import build_client
 
 INVENTORY_URL = "https://www.tesla.com/inventory/api/v4/inventory-results"
@@ -65,11 +67,16 @@ class TeslaSource(Source):
         return listings
 
     def fetch_raw_page(self, *, model: str, country: str, offset: int = 0) -> dict:
-        """One raw page, unparsed — for inspecting the real response shape."""
+        """One raw page, unparsed — for inspecting the real response shape.
+
+        Goes through sources/fetch.py rather than this class's httpx client:
+        Akamai scores the TLS handshake here, and Python's own is rejected
+        outright even from a home connection (see that module).
+        """
         payload = _build_query(model, country, offset=offset)
-        response = self.client.get(INVENTORY_URL, params={"query": json.dumps(payload)})
-        response.raise_for_status()
-        return response.json()
+        url = f"{INVENTORY_URL}?{urlencode({'query': json.dumps(payload)})}"
+        language = str(MARKET_REFERENCE_POINTS[country]["language"])
+        return json.loads(fetch_json(url, accept_language=f"{language},en;q=0.8"))
 
     def _iter_pages(self, model: str, country: str):
         offset = 0
