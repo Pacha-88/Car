@@ -117,8 +117,11 @@ Grid card:
 
 ## New fields this adds to the Phase 1 data model
 Not in the original schema, needed for Phase 4 parity:
-- `power_kw` (numeric)
-- `color` (categorical + "unknown" bucket)
+- `power_kw` (numeric) — **done**, added in Phase 2 (AutoScout24's `vehicleDetails`
+  has it directly; Tesla's source doesn't populate it yet)
+- `color` (categorical + "unknown" bucket) — AutoScout24's search-results
+  payload doesn't include it either, despite the site having a colour
+  filter; would need the individual listing page, not just search results
 - `battery_soh_percent` (optional, source-dependent)
 - `description_raw` (short free text, for the hover-card snippet)
 - watchlist membership as a **per-listing** flag/join table, not a saved

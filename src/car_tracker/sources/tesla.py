@@ -25,6 +25,7 @@ from datetime import date
 
 import httpx
 
+from car_tracker.normalize.currency import market_currency
 from car_tracker.sources.base import RawListing, Source
 
 INVENTORY_URL = "https://www.tesla.com/inventory/api/v4/inventory-results"
@@ -59,11 +60,11 @@ class TeslaSource(Source):
     def __exit__(self, *exc_info: object) -> None:
         self.close()
 
-    def fetch_listings(self, *, model: str, country: str) -> list[RawListing]:
+    def fetch_listings(self, *, model: str, country: str, max_pages: int | None = None) -> list[RawListing]:
         listings: list[RawListing] = []
-        for offset, results, total in self._iter_pages(model, country):
+        for page_num, (offset, results, total) in enumerate(self._iter_pages(model, country), start=1):
             listings.extend(parse_item(item, model=model, country=country) for item in results)
-            if offset + PAGE_SIZE >= total:
+            if offset + PAGE_SIZE >= total or (max_pages is not None and page_num >= max_pages):
                 break
         return listings
 
@@ -138,7 +139,7 @@ def parse_item(item: dict, *, model: str, country: str) -> RawListing:
         country=country,
         url=f"https://www.tesla.com/{country.lower()}/inventory/used/{MODEL_CODES[model]}/{vin}",
         price_original=float(item.get("Price", 0)),
-        currency_original=_market_currency(country),
+        currency_original=market_currency(country),
         mileage_km=odometer,
         model_year=item.get("Year"),
         first_registration=None,
@@ -148,7 +149,3 @@ def parse_item(item: dict, *, model: str, country: str) -> RawListing:
         seller_type="tesla",
         location=item.get("VehicleLocation") or item.get("City"),
     )
-
-
-def _market_currency(country: str) -> str:
-    return {"DE": "EUR", "AT": "EUR", "HU": "HUF"}.get(country, "EUR")

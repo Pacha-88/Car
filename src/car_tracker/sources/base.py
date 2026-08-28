@@ -37,6 +37,7 @@ class RawListing:
     photo_urls: list[str] = field(default_factory=list)
     seller_type: str | None = None
     location: str | None = None
+    power_kw: int | None = None
 
 
 class Source(ABC):
@@ -45,5 +46,10 @@ class Source(ABC):
     name: str
 
     @abstractmethod
-    def fetch_listings(self, *, model: str, country: str) -> list[RawListing]:
-        """Return every currently-listed car for `model` in `country`."""
+    def fetch_listings(self, *, model: str, country: str, max_pages: int | None = None) -> list[RawListing]:
+        """Return every currently-listed car for `model` in `country`.
+
+        `max_pages` caps how many result pages are fetched (None = all) —
+        a knob for callers that want to bound request volume, not a policy
+        this layer sets on its own.
+        """

@@ -10,10 +10,12 @@ from car_tracker.db.models import Listing, ListingSnapshot
 from car_tracker.db.session import init_db, session_scope
 from car_tracker.normalize.chassis import detect_chassis
 from car_tracker.normalize.currency import to_eur
+from car_tracker.normalize.variant import normalize_variant
+from car_tracker.sources.autoscout24 import AutoScout24Source
 from car_tracker.sources.base import RawListing
 from car_tracker.sources.tesla import TeslaSource
 
-SOURCES = {"tesla": TeslaSource}
+SOURCES = {"tesla": TeslaSource, "autoscout24": AutoScout24Source}
 COUNTRIES = ["DE", "AT", "HU"]
 MODELS = ["model_y", "model_3"]
 
@@ -37,7 +39,7 @@ def cmd_scrape(args: argparse.Namespace) -> None:
 
     source_cls = SOURCES[args.source]
     with source_cls() as source:
-        raw_listings = source.fetch_listings(model=args.model, country=args.country)
+        raw_listings = source.fetch_listings(model=args.model, country=args.country, max_pages=args.max_pages)
 
     # TODO(F1): replace with fx/ecb.py rates loaded from the fx_rates table
     # once that's wired up; a manual override is enough to prove the pipeline.
@@ -58,6 +60,7 @@ def _upsert(session, raw: RawListing, *, rates_to_eur: dict[str, float], observe
     chassis_gen = detect_chassis(
         raw.model, first_registration=raw.first_registration, model_year=raw.model_year, title=raw.title_raw
     )
+    variant = normalize_variant(raw.variant)
 
     if listing is None:
         listing = Listing(
@@ -66,7 +69,7 @@ def _upsert(session, raw: RawListing, *, rates_to_eur: dict[str, float], observe
             source_listing_id=raw.source_listing_id,
             model=raw.model,
             chassis_gen=chassis_gen,
-            variant=raw.variant,
+            variant=variant,
             country=raw.country,
             model_year=raw.model_year,
             first_registration=raw.first_registration,
@@ -75,6 +78,7 @@ def _upsert(session, raw: RawListing, *, rates_to_eur: dict[str, float], observe
             photo_urls=raw.photo_urls,
             seller_type=raw.seller_type,
             location=raw.location,
+            power_kw=raw.power_kw,
             first_seen_at=observed_at,
             last_seen_at=observed_at,
             is_active=True,
@@ -84,6 +88,8 @@ def _upsert(session, raw: RawListing, *, rates_to_eur: dict[str, float], observe
         listing.last_seen_at = observed_at
         listing.is_active = True
         listing.chassis_gen = chassis_gen or listing.chassis_gen
+        listing.variant = variant or listing.variant
+        listing.power_kw = raw.power_kw or listing.power_kw
 
     session.add(
         ListingSnapshot(
@@ -114,8 +120,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_scrape = subparsers.add_parser("scrape", help="scrape one source/model/country and store snapshots")
     p_scrape.add_argument("--source", required=True, choices=sorted(SOURCES))
     p_scrape.add_argument("--model", choices=MODELS, required=True)
-    p_scrape.add_argument("--country", choices=COUNTRIES, required=True)
+    # Not choice-constrained here: country coverage differs per source (e.g.
+    # autoscout24 also does NL/BE/IT/ES/FR/LU, tesla doesn't); each source
+    # validates its own country and raises a clear error.
+    p_scrape.add_argument("--country", required=True)
     p_scrape.add_argument("--huf-rate", type=float, default=None, help="manual HUF->EUR override until fx/ecb.py is wired up")
+    p_scrape.add_argument("--max-pages", type=int, default=None, help="cap result pages fetched (default: no cap)")
     p_scrape.set_defaults(func=cmd_scrape)
 
     return parser

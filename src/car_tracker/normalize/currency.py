@@ -9,6 +9,15 @@ from __future__ import annotations
 
 EUR = "EUR"
 
+# Which currency a listing in a given country is priced in. Every supported
+# market except Hungary is eurozone; add here as coverage grows rather than
+# assuming EUR everywhere.
+_NON_EUR_COUNTRIES: dict[str, str] = {"HU": "HUF"}
+
+
+def market_currency(country: str) -> str:
+    return _NON_EUR_COUNTRIES.get(country, EUR)
+
 
 def to_eur(amount: float, currency: str, rates_to_eur: dict[str, float]) -> float:
     """Convert `amount` in `currency` to EUR.

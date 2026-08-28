@@ -42,6 +42,7 @@ class Listing(Base):
     photo_urls: Mapped[list[str]] = mapped_column(JSON, default=list)
     seller_type: Mapped[str | None] = mapped_column(String, nullable=True)  # "dealer" | "private" | "tesla"
     location: Mapped[str | None] = mapped_column(String, nullable=True)
+    power_kw: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     first_seen_at: Mapped[datetime] = mapped_column(DateTime)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime)
