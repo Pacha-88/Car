@@ -90,7 +90,37 @@ as free text on both Kleinanzeigen and Használtautó.hu titles/descriptions
 consistent enough from a couple of examples to extract with confidence; see
 `docs/DASHBOARD_SPEC.md`.
 
-Not started: analysis layer (Phase 3), dashboard (Phase 4), deployment (Phase 5).
+**Phase 3 (analysis layer): done, with reasonable defaults flagged for
+later tuning rather than settled decisions.** `src/car_tracker/analysis/`:
+
+- `listing_status.py` — `days_at_current_price` (walks a listing's
+  snapshots back from the latest while the price is unchanged) and
+  `is_new_since_last_scrape` (compares `first_seen_at`'s date against the
+  most recent scrape date). Both derive straight from the snapshot table,
+  no design ambiguity here.
+- `trend.py` — a binned-median trend line for the scatter chart, and a
+  plain closed-form linear (OLS) slope for the "€ per 10k km" stat and for
+  mileage-normalizing prices in the depreciation module. Deliberately not
+  LOESS/polynomial: no stats dependency needed, robust to the outlier
+  listings every source has, and the binned-median approach visually
+  approximates the curved trend line in the reference screenshots without
+  a real risk of overfitting at the sparse ends of the mileage range.
+- `depreciation.py` — age-bucketing (whole years, `under_1yr`/`1yr`/.../
+  `7yr_plus` catch-all), the `reference_km=60_000` / `min_bucket_size=10`
+  defaults matching the numbers implied by the reference screenshots, and
+  the `steepest_drop`/`curve_flattens_at`/`cheapest_to_own` insight cards.
+  **Not implemented: "versus buying new" and a true "new list price"
+  reference point** — both need Tesla's *new*-car pricing, which none of
+  the four sources (all used-listing sources) provide; faking a stand-in
+  felt worse than leaving the gap documented.
+
+Verified against real pooled data from all four sources' fixtures (10
+listings): produced a plausible slope (~‑640 EUR per 10k km) and sensible
+buckets, correctly flagging every bucket thin at this tiny sample size —
+real depreciation numbers need real scrape volume, which this doesn't have
+yet (Phase 5).
+
+Not started: dashboard (Phase 4), deployment (Phase 5).
 
 ## Running it
 

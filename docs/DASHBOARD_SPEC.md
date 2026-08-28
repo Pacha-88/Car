@@ -137,13 +137,21 @@ Not in the original schema, needed for Phase 4 parity:
   "new since last scrape")
 - `excluded` as a first-class per-listing flag (drives both the depreciation
   chart's dashed/excluded treatment and the main filter bar's "show excluded
-  listings" toggle) — likely: thin age-bucket membership or an
-  outlier/implausible-price heuristic; exact rule TBD when we build this
-  module (Phase 3).
+  listings" toggle) — **partially resolved in Phase 3**: `depreciation.py`'s
+  `DepreciationBucket.is_thin` (n below `min_bucket_size`) covers the
+  thin-bucket half of this. An outlier/implausible-price heuristic for
+  individual listings is still open — not needed until Phase 4 actually
+  renders the "show excluded listings" toggle.
 
-## Open questions for when we build this (not needed for Phase 1/2)
-- Exact trend-line algorithm (LOESS? rolling median? something else) —
-  the curve shape in the screenshots is smooth and non-linear.
-- Exact "excluded" rule.
+## Resolved in Phase 3 (`src/car_tracker/analysis/`)
+- Trend-line algorithm: binned median (`trend.py`), not LOESS — a
+  reasonable default, not a settled choice; see README's Phase 3 section
+  for the reasoning and what to reach for if it doesn't look smooth enough
+  once real data is flowing.
+- Thin-bucket rule: `n < min_bucket_size` (default 10).
+
+## Open questions for when we build Phase 4
 - Where `power_kw` / `color` / `battery_soh_percent` actually come from per
-  source (some sites won't have all of these).
+  source (some sites won't have all of these) — see the field list above.
+- Per-listing outlier/implausible-price exclusion rule (the other half of
+  `excluded`, see above).
