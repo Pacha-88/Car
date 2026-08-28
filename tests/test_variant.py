@@ -12,6 +12,10 @@ from car_tracker.normalize.variant import normalize_variant
         ("Long Range AWD *20-Zoll*", "long_range_awd"),
         ("Rear-Wheel Drive", "rwd"),
         ("Some Unrecognized Trim Name", "other"),
+        # Real Tesla TrimVariantCode values (2026-08-28 sample) — exact-code
+        # match, since the phrase check alone would miss "LR_AWD" entirely.
+        ("LR_AWD", "long_range_awd"),
+        ("RWD", "rwd"),
         (None, None),
         ("", None),
     ],

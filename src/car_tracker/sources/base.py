@@ -38,6 +38,7 @@ class RawListing:
     seller_type: str | None = None
     location: str | None = None
     power_kw: int | None = None
+    color: str | None = None
 
 
 class Source(ABC):

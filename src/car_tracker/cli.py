@@ -79,6 +79,7 @@ def _upsert(session, raw: RawListing, *, rates_to_eur: dict[str, float], observe
             seller_type=raw.seller_type,
             location=raw.location,
             power_kw=raw.power_kw,
+            color=raw.color,
             first_seen_at=observed_at,
             last_seen_at=observed_at,
             is_active=True,
@@ -90,6 +91,7 @@ def _upsert(session, raw: RawListing, *, rates_to_eur: dict[str, float], observe
         listing.chassis_gen = chassis_gen or listing.chassis_gen
         listing.variant = variant or listing.variant
         listing.power_kw = raw.power_kw or listing.power_kw
+        listing.color = raw.color or listing.color
 
     session.add(
         ListingSnapshot(

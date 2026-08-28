@@ -27,37 +27,49 @@ module, and an interactive dashboard.
 
 ## Status
 
-**Phase 1 (data model + one source end-to-end): done**, except the Tesla
-source itself — see gap below. Data model, chassis/currency normalization,
-ECB feed parser, CLI (`init-db`, `scrape`, `tesla-raw-sample`), all unit-tested.
+**Phase 1 (data model + one source end-to-end): done.** Data model,
+chassis/currency normalization, ECB feed parser, CLI (`init-db`, `scrape`,
+`tesla-raw-sample`), all unit-tested.
 
-**Phase 2 (more sources): in progress.** AutoScout24 is done and verified end
-to end against live data — `parse_item()` reads the `__NEXT_DATA__` JSON
-Next.js embeds in the search-results page (not HTML scraping), tested against
-real fixture data (`tests/fixtures/autoscout24_search_sample.html`) and via a
-live `car-tracker scrape` run. Covers DE/AT/NL/BE/IT/ES/FR/LU — confirmed HU
-returns zero results (AutoScout24 doesn't meaningfully cover Hungary, which
-is why Használtautó.hu is a separate source rather than redundant). Also
-picked up `power_kw` along the way (in `vehicleDetails`, wasn't in the
-original schema) — see `docs/DASHBOARD_SPEC.md`. Not started: Kleinanzeigen,
-Használtautó.hu.
+**Phase 2 (more sources): in progress.**
 
-**Known gap:** the Tesla source's `parse_item()` is still an unverified
-best-effort guess — this sandbox's network policy now allows tesla.com, but
-Tesla's own Akamai edge 403s even a plain homepage GET from here, likely
-IP-reputation-based. A real-browser-fingerprint test (Playwright/Chromium)
-was inconclusive: this sandbox's Chromium can't complete a trusted HTTPS
-connection to *any* external host yet (confirmed against pypi.org too,
+- **Tesla.com: done, verified against a real response.** This sandbox
+  itself can't reach tesla.com (Akamai 403s it, likely IP-reputation-based —
+  see below), but the project owner ran the exact query this module builds
+  from a normal home connection and shared the real response; `parse_item()`
+  was rewritten against real field names (several original guesses were
+  wrong — e.g. the odometer unit field is `OdometerType`/`OdometerTypeShort`,
+  not the guessed `OdometerTypeUnit`; there's no `VehicleConfig` wrapper).
+  Also gained `first_registration` (was hardcoded `None`), real photo URLs
+  (`VehiclePhotos`, guessed empty before), and `color` (`PAINT`). Covered by
+  `tests/test_tesla.py`, modeled on the real shapes rather than a byte-exact
+  capture (the response was shared as a pasted object-tree, not raw JSON).
+  The listing detail URL is still an unconfirmed guessed pattern — no direct
+  URL field showed up in the sample.
+- **AutoScout24: done, verified end to end against live data** — `parse_item()`
+  reads the `__NEXT_DATA__` JSON Next.js embeds in the search-results page
+  (not HTML scraping), tested against real fixture data
+  (`tests/fixtures/autoscout24_search_sample.html`) and via a live
+  `car-tracker scrape` run. Covers DE/AT/NL/BE/IT/ES/FR/LU — confirmed HU
+  returns zero results (AutoScout24 doesn't meaningfully cover Hungary,
+  which is why Használtautó.hu is a separate source rather than redundant).
+- Picked up `power_kw` and `color` along the way (neither was in the
+  original schema) — see `docs/DASHBOARD_SPEC.md`.
+- Not started: Kleinanzeigen, Használtautó.hu.
+
+**Known gap:** Tesla.com and Használtautó.hu both block this sandbox's own
+outbound requests at the site level regardless of the org network policy —
+Tesla via Akamai (403s even a plain homepage GET, likely IP-reputation-based),
+Használtautó.hu via Cloudflare Bot Management (403s its homepage too). A
+real-browser-fingerprint test (Playwright/Chromium) to see if that fares
+better was inconclusive: this sandbox's Chromium can't complete a trusted
+HTTPS connection to *any* external host yet (confirmed against pypi.org too,
 which is fully allowlisted) — a gap in the sandbox's own proxy/CA plumbing
-for browser engines, separate from both the org policy and Tesla's block,
-and not something to paper over with `--ignore-certificate-errors`.
-Használtautó.hu hits the same wall (Cloudflare Bot Management 403s its
-homepage too). Options, still open:
-
-1. Fetch from your own network (`curl`/browser) and paste the response back.
-2. Do the scraper-verification steps from a local Claude Code session instead.
-3. A residential/anti-bot-proxy service for whichever of these stay blocked
-   even from a normal home network (not yet needed — untested from one).
+for browser engines, separate from the org policy and from Tesla's block,
+and not something to paper over with `--ignore-certificate-errors`. Tesla
+got unblocked by fetching from a normal home connection instead (see above);
+the same approach is the next step for Kleinanzeigen's search/listing pages
+(homepage alone tested so far, was open) and for Használtautó.hu.
 
 Not started: analysis layer (Phase 3), dashboard (Phase 4), deployment (Phase 5).
 

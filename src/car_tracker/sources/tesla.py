@@ -2,26 +2,21 @@
 
 Hits Tesla's own inventory JSON endpoint directly rather than parsing HTML —
 this endpoint is undocumented but has been used by community inventory
-trackers for years with a stable shape, and typically has no bot-detection
-friction (unlike AutoScout24/Kleinanzeigen).
+trackers for years with a stable shape, and has no bot-detection friction
+from a normal (non-datacenter) IP, unlike AutoScout24/Kleinanzeigen.
 
-CAVEAT: this sandbox currently cannot reach tesla.com (organization network
-policy — see project README), so nothing here has been checked against a
-live response yet. `_build_query` (the request shape: model codes, the
-query/offset/count envelope, market/language/super_region/lat/lng/zip/range)
-is the well-established part. `parse_item` — the field names read off each
-result — is a best-effort guess and is exactly what to check first, e.g. via:
-
-    python -m car_tracker.cli tesla-raw-sample --model model_y --country DE
-
-which dumps one raw page to JSON so the field mapping below can be corrected
-against real data instead of guesswork.
+`_build_query` (model codes, the query/offset/count envelope,
+market/language/super_region/lat/lng/zip/range) and `parse_item` (the field
+names read off each result) are both verified against a real response
+(2026-08-28, DE, Model Y — `total_matches_found: 101`, 5 results, run from a
+normal home connection; this project's dev sandbox is blocked from reaching
+tesla.com at all by IP-reputation-based bot defense, see README).
 """
 
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, datetime
 
 import httpx
 
@@ -34,8 +29,8 @@ MODEL_CODES = {"model_y": "my", "model_3": "m3"}
 PAGE_SIZE = 50
 
 # A representative point per market — Tesla's search wants a lat/lng/zip even
-# for a market-wide query. Capital cities + range=0 is the common pattern in
-# public trackers for "whole market", but that needs confirming live.
+# for a market-wide query. Capital cities + range=0: confirmed this returns
+# market-wide (not radius-limited) results for DE.
 MARKET_REFERENCE_POINTS: dict[str, dict[str, object]] = {
     "DE": {"lat": 52.5200, "lng": 13.4050, "zip": "10115", "language": "de"},
     "AT": {"lat": 48.2082, "lng": 16.3738, "zip": "1010", "language": "de"},
@@ -117,20 +112,19 @@ def _build_query(model: str, country: str, *, offset: int = 0) -> dict:
 
 
 def parse_item(item: dict, *, model: str, country: str) -> RawListing:
-    """Best-effort field mapping — NOT yet checked against a live response.
+    """Field mapping verified against a real response (see module docstring).
 
-    Field names are the ones commonly reported for this endpoint (Price,
-    VIN, Year, Odometer/OdometerTypeUnit, TrimName); Tesla has changed this
-    shape before without notice, so verify with fetch_raw_page() before
-    trusting any of this. Photo URLs are deliberately left empty: they're
-    normally derived from a separate compositor/asset service keyed by
-    option codes rather than present as plain URLs, and that derivation
-    isn't implemented yet.
+    `url` is the one unconfirmed piece — no direct listing-URL field showed
+    up in the sample, so this is still a guessed path pattern.
     """
     vin = item.get("VIN", "")
     odometer = item.get("Odometer")
-    if odometer is not None and str(item.get("OdometerTypeUnit", "km")).lower().startswith("mi"):
+    unit = item.get("OdometerTypeShort") or item.get("OdometerType") or "km"
+    if odometer is not None and str(unit).lower().startswith("mi"):
         odometer = round(odometer * 1.60934)
+
+    paint = item.get("PAINT") or []
+    photos = [p["imageUrl"] for p in item.get("VehiclePhotos", []) if p.get("imageUrl")]
 
     return RawListing(
         source="tesla",
@@ -139,13 +133,24 @@ def parse_item(item: dict, *, model: str, country: str) -> RawListing:
         country=country,
         url=f"https://www.tesla.com/{country.lower()}/inventory/used/{MODEL_CODES[model]}/{vin}",
         price_original=float(item.get("Price", 0)),
-        currency_original=market_currency(country),
+        currency_original=item.get("CurrencyCode") or market_currency(country),
         mileage_km=odometer,
         model_year=item.get("Year"),
-        first_registration=None,
-        variant=item.get("TrimName"),
+        first_registration=_parse_iso_date(item.get("FirstRegistrationDate")),
+        variant=item.get("TrimVariantCode") or item.get("TrimName"),
         title_raw=None,  # Tesla listings don't have a free-text title to re-parse later, unlike marketplace ads
-        photo_urls=[],
+        photo_urls=photos,
         seller_type="tesla",
-        location=item.get("VehicleLocation") or item.get("City"),
+        location=item.get("City"),
+        power_kw=(item.get("EmissionsData") or {}).get("power"),
+        color=paint[0].lower() if paint else None,
     )
+
+
+def _parse_iso_date(text: str | None) -> date | None:
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text).date()
+    except ValueError:
+        return None
