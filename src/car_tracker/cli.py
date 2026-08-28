@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timezone
+from collections import defaultdict
+from datetime import datetime
 
+from sqlalchemy import func, select
+
+from car_tracker.analysis.listing_status import days_at_current_price, is_new_since_last_scrape
 from car_tracker.db.models import Listing, ListingSnapshot
 from car_tracker.db.session import init_db, session_scope
 from car_tracker.normalize.chassis import detect_chassis
@@ -16,6 +20,7 @@ from car_tracker.sources.base import RawListing
 from car_tracker.sources.hasznaltauto import HasznaltautoSource
 from car_tracker.sources.kleinanzeigen import KleinanzeigenSource
 from car_tracker.sources.tesla import TeslaSource
+from car_tracker.timeutil import utc_now
 
 SOURCES = {
     "tesla": TeslaSource,
@@ -54,11 +59,70 @@ def cmd_scrape(args: argparse.Namespace) -> None:
     if args.huf_rate is not None:
         rates_to_eur["HUF"] = args.huf_rate
 
-    now = datetime.now(timezone.utc)
+    now = utc_now()
     with session_scope() as session:
         for raw in raw_listings:
             _upsert(session, raw, rates_to_eur=rates_to_eur, observed_at=now)
     print(f"stored {len(raw_listings)} listings from {args.source}/{args.model}/{args.country}")
+
+
+def cmd_export(args: argparse.Namespace) -> None:
+    """Dump the DB to a static JSON file the frontend can fetch directly.
+
+    Stand-in for Supabase's auto-REST API during local dev (see
+    frontend/README) - same listing shape, just a file instead of a live
+    query. Only `is_active` listings are included.
+    """
+    now = utc_now()
+    with session_scope() as session:
+        latest_observed_at = session.execute(select(func.max(ListingSnapshot.observed_at))).scalar()
+        latest_scrape_date = latest_observed_at.date() if latest_observed_at else None
+
+        snapshots_by_listing: dict[str, list[ListingSnapshot]] = defaultdict(list)
+        for snapshot in session.execute(select(ListingSnapshot)).scalars():
+            snapshots_by_listing[snapshot.listing_id].append(snapshot)
+
+        listings_out = []
+        for listing in session.execute(select(Listing).where(Listing.is_active.is_(True))).scalars():
+            snapshots = snapshots_by_listing.get(listing.id)
+            if not snapshots:
+                continue
+            latest = max(snapshots, key=lambda s: s.observed_at)
+            listings_out.append(
+                {
+                    "id": listing.id,
+                    "source": listing.source,
+                    "model": listing.model,
+                    "chassisGen": listing.chassis_gen,
+                    "variant": listing.variant,
+                    "country": listing.country,
+                    "modelYear": listing.model_year,
+                    "firstRegistration": listing.first_registration.isoformat() if listing.first_registration else None,
+                    "url": listing.url,
+                    "titleRaw": listing.title_raw,
+                    "photoUrls": listing.photo_urls,
+                    "sellerType": listing.seller_type,
+                    "location": listing.location,
+                    "powerKw": listing.power_kw,
+                    "color": listing.color,
+                    "firstSeenAt": listing.first_seen_at.isoformat(),
+                    "priceEur": latest.price_eur,
+                    "mileageKm": latest.mileage_km,
+                    "daysAtCurrentPrice": days_at_current_price(snapshots, as_of=now),
+                    "isNew": is_new_since_last_scrape(listing.first_seen_at, latest_scrape_date=latest_scrape_date)
+                    if latest_scrape_date
+                    else False,
+                }
+            )
+
+    payload = {
+        "generatedAt": now.isoformat(),
+        "latestScrapeDate": latest_scrape_date.isoformat() if latest_scrape_date else None,
+        "listings": listings_out,
+    }
+    with open(args.out, "w", encoding="utf-8") as f:
+        json.dump(payload, f)
+    print(f"exported {len(listings_out)} active listings to {args.out}")
 
 
 def _upsert(session, raw: RawListing, *, rates_to_eur: dict[str, float], observed_at: datetime) -> None:
@@ -136,6 +200,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_scrape.add_argument("--huf-rate", type=float, default=None, help="manual HUF->EUR override until fx/ecb.py is wired up")
     p_scrape.add_argument("--max-pages", type=int, default=None, help="cap result pages fetched (default: no cap)")
     p_scrape.set_defaults(func=cmd_scrape)
+
+    p_export = subparsers.add_parser("export", help="dump active listings to a static JSON file for the frontend")
+    p_export.add_argument("--out", required=True, help="output path, e.g. frontend/public/data/listings.json")
+    p_export.set_defaults(func=cmd_export)
 
     return parser
 
