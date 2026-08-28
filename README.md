@@ -180,10 +180,8 @@ feed live for the first time this phase, and the production frontend
 build served from a simulated GitHub Pages subpath.
 
 What's left is three steps only the project owner can do (an external
-Supabase signup, a repo secret, a repo settings toggle) plus merging this
-branch to the repo's default branch, since GitHub only fires `schedule:`
-triggers from workflow files that live there — all spelled out in
-`docs/DEPLOYMENT.md`.
+Supabase signup, a repo secret, a repo settings toggle) — all spelled out
+in `docs/DEPLOYMENT.md`.
 
 ## Running it
 

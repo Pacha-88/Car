@@ -42,14 +42,16 @@ Repo → **Settings → Pages → Build and deployment → Source** → select
 **"GitHub Actions"** (not "Deploy from a branch"). Nothing else to pick — the
 workflow's `deploy-pages` step handles the rest.
 
-## 4. Merge the workflow to your default branch
+## A note on branches
 
 GitHub only evaluates a `schedule:` trigger from workflow files on the
-**default branch** (`main`) — a schedule defined on a feature branch never
-fires, no matter how long you wait. Once this branch's changes are merged,
-the daily run starts firing on its own; until then, you can still test it
-manually (see below), since manually running a workflow lets you pick any
-branch that has the file.
+repo's **default branch** — a schedule defined on any other branch never
+fires, no matter how long you wait. Right now `claude/auto-portal-planning-szpk2m`
+*is* this repo's only branch, so it's already the default branch and no
+merge step is needed — steps 1-3 above are all that's left. This only
+becomes relevant if you later create a `main` and move work there: at that
+point, bring this workflow file along, since the schedule follows whichever
+branch is set as default in **Settings → General → Default branch**.
 
 ## Running it
 
