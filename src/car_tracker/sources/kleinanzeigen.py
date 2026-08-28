@@ -34,6 +34,7 @@ from datetime import date
 import httpx
 
 from car_tracker.sources.base import RawListing, Source
+from car_tracker.sources.http import build_client
 
 BASE_URL = "https://www.kleinanzeigen.de/s-autos"
 MODEL_SLUGS = {"model_y": "tesla-model-y", "model_3": "tesla-model-3"}
@@ -61,7 +62,7 @@ class KleinanzeigenSource(Source):
 
     def __init__(self, client: httpx.Client | None = None) -> None:
         self._owns_client = client is None
-        self.client = client or httpx.Client(timeout=20.0, headers={"User-Agent": "Mozilla/5.0"}, follow_redirects=True)
+        self.client = client or build_client(accept_language="de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7")
 
     def close(self) -> None:
         if self._owns_client:

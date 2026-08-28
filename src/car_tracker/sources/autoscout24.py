@@ -26,6 +26,7 @@ import httpx
 
 from car_tracker.normalize.currency import market_currency
 from car_tracker.sources.base import RawListing, Source
+from car_tracker.sources.http import build_client
 
 BASE_URL = "https://www.autoscout24.com/lst/tesla"
 MAKE_ID = 51520  # Tesla
@@ -48,7 +49,7 @@ class AutoScout24Source(Source):
 
     def __init__(self, client: httpx.Client | None = None) -> None:
         self._owns_client = client is None
-        self.client = client or httpx.Client(timeout=20.0, headers={"User-Agent": "Mozilla/5.0"})
+        self.client = client or build_client()
 
     def close(self) -> None:
         if self._owns_client:

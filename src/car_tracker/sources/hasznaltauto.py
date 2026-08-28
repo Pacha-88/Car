@@ -42,6 +42,7 @@ import httpx
 
 from car_tracker.normalize.currency import market_currency
 from car_tracker.sources.base import RawListing, Source
+from car_tracker.sources.http import build_client
 
 BASE_URL = "https://www.hasznaltauto.hu/szemelyauto/tesla"
 MODEL_SLUGS = {"model_y": "model_y", "model_3": "model_3"}  # model_3 unconfirmed
@@ -65,7 +66,8 @@ class HasznaltautoSource(Source):
 
     def __init__(self, client: httpx.Client | None = None) -> None:
         self._owns_client = client is None
-        self.client = client or httpx.Client(timeout=20.0, headers={"User-Agent": "Mozilla/5.0"}, follow_redirects=True)
+        # A Hungarian site: a real browser opening it would usually ask for Hungarian first.
+        self.client = client or build_client(accept_language="hu-HU,hu;q=0.9,en-US;q=0.8,en;q=0.7")
 
     def close(self) -> None:
         if self._owns_client:

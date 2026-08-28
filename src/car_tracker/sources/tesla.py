@@ -22,6 +22,7 @@ import httpx
 
 from car_tracker.normalize.currency import market_currency
 from car_tracker.sources.base import RawListing, Source
+from car_tracker.sources.http import build_client
 
 INVENTORY_URL = "https://www.tesla.com/inventory/api/v4/inventory-results"
 
@@ -43,7 +44,7 @@ class TeslaSource(Source):
 
     def __init__(self, client: httpx.Client | None = None) -> None:
         self._owns_client = client is None
-        self.client = client or httpx.Client(timeout=20.0, headers={"User-Agent": "Mozilla/5.0"})
+        self.client = client or build_client()
 
     def close(self) -> None:
         if self._owns_client:
