@@ -178,14 +178,22 @@ function YearLegend({ minYear, maxYear }: { minYear: number; maxYear: number }) 
 
 interface HoverCardProps {
   active?: boolean;
-  payload?: { payload: ScatterPoint }[];
+  // The trend line's points are plain {mileageKm, priceEur} - no `listing` -
+  // so the payload is only *partly* ScatterPoint-shaped. Typing it honestly
+  // is what makes the guard below obviously necessary rather than defensive.
+  payload?: { payload: Partial<ScatterPoint> }[];
   watchlist: Set<string>;
   onToggleWatchlist: (id: string) => void;
 }
 
 function HoverCard({ active, payload, watchlist, onToggleWatchlist }: HoverCardProps) {
   if (!active || !payload || payload.length === 0) return null;
-  const { listing } = payload[0].payload;
+  // This chart draws two series, and Recharts hands the tooltip whichever one
+  // is under the cursor. Only the scatter carries a listing; hovering the
+  // trend line used to reach `listing.id` on undefined, which threw and (with
+  // no error boundary above it) blanked the whole dashboard.
+  const listing = payload.find((entry) => entry?.payload?.listing)?.payload.listing;
+  if (!listing) return null;
   const isWatchlisted = watchlist.has(listing.id);
 
   return (

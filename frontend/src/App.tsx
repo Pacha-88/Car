@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { DepreciationModule } from "./components/DepreciationModule";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { FilterBar } from "./components/FilterBar";
 import { ListingGrid } from "./components/ListingGrid";
 import { PriceScatterChart } from "./components/PriceScatterChart";
@@ -158,19 +159,25 @@ export default function App() {
       </div>
 
       <div className="mb-4">
-        <PriceScatterChart
-          listings={highlighted}
-          showTrendLine={filters.showTrendLine}
-          watchlist={watchlist}
-          onToggleWatchlist={toggleWatchlist}
-        />
+        <ErrorBoundary label="The price chart">
+          <PriceScatterChart
+            listings={highlighted}
+            showTrendLine={filters.showTrendLine}
+            watchlist={watchlist}
+            onToggleWatchlist={toggleWatchlist}
+          />
+        </ErrorBoundary>
       </div>
 
       <div className="mb-4">
-        <DepreciationModule listings={displayed} />
+        <ErrorBoundary label="The depreciation module">
+          <DepreciationModule listings={displayed} />
+        </ErrorBoundary>
       </div>
 
-      <ListingGrid listings={displayed} watchlist={watchlist} onToggleWatchlist={toggleWatchlist} />
+      <ErrorBoundary label="The listing grid">
+        <ListingGrid listings={displayed} watchlist={watchlist} onToggleWatchlist={toggleWatchlist} />
+      </ErrorBoundary>
     </div>
   );
 }
