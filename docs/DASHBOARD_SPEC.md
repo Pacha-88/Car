@@ -123,8 +123,14 @@ Not in the original schema, needed for Phase 4 parity:
   e.g. `["BLACK"]`). AutoScout24's search-results payload doesn't include it
   despite the site having a colour filter — would need the individual
   listing page, not just search results, so still missing there.
-- `battery_soh_percent` (optional, source-dependent)
-- `description_raw` (short free text, for the hover-card snippet)
+- `battery_soh_percent` (optional, source-dependent) — confirmed real on
+  Kleinanzeigen (~2 of 27 listings in one sample mentioned it, e.g. "91,8
+  SOH"), but only as free text buried in the ad title, format unconfirmed
+  beyond that one example — deliberately not extracted yet rather than
+  guessing a regex off a single sample.
+- `description_raw` (short free text, for the hover-card snippet) — real on
+  Kleinanzeigen (in the search page's `ImageObject` JSON-LD blocks) and
+  Tesla (not checked yet); not wired up yet, no RawListing field for it.
 - watchlist membership as a **per-listing** flag/join table, not a saved
   filter preset (it behaves like "highlight this specific car", same as
   "new since last scrape")

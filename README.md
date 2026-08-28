@@ -53,9 +53,22 @@ chassis/currency normalization, ECB feed parser, CLI (`init-db`, `scrape`,
   `car-tracker scrape` run. Covers DE/AT/NL/BE/IT/ES/FR/LU — confirmed HU
   returns zero results (AutoScout24 doesn't meaningfully cover Hungary,
   which is why Használtautó.hu is a separate source rather than redundant).
+- **Kleinanzeigen: done, DE only.** No JSON blob here (not a JS-framework
+  page) — `parse_item()` regexes the server-rendered `.aditem` result cards
+  directly, which is more fragile than AutoScout24's approach (a markup
+  redesign breaks this silently). Verified against a real response
+  (`tests/fixtures/kleinanzeigen_search_sample.html`): confirmed the
+  `/s-autos/{slug}/k0c216` URL and the `seite:N` pagination pattern (read
+  off the page's own pagination links), and two real gotchas worth having
+  caught before they corrupted data — search results mix in "wanted"
+  ("Gesuch") ads among the for-sale ones, and some listings have no fixed
+  price at all ("VB" alone); both are filtered out in `parse_item()`, the
+  first by Kleinanzeigen's own tag rather than any guessing. No structured
+  trim field like AutoScout24's, so the ad title feeds the same central
+  `normalize_variant()` every other source uses.
 - Picked up `power_kw` and `color` along the way (neither was in the
   original schema) — see `docs/DASHBOARD_SPEC.md`.
-- Not started: Kleinanzeigen, Használtautó.hu.
+- Not started: Használtautó.hu.
 
 **Known gap:** Tesla.com and Használtautó.hu both block this sandbox's own
 outbound requests at the site level regardless of the org network policy —
@@ -68,8 +81,18 @@ which is fully allowlisted) — a gap in the sandbox's own proxy/CA plumbing
 for browser engines, separate from the org policy and from Tesla's block,
 and not something to paper over with `--ignore-certificate-errors`. Tesla
 got unblocked by fetching from a normal home connection instead (see above);
-the same approach is the next step for Kleinanzeigen's search/listing pages
-(homepage alone tested so far, was open) and for Használtautó.hu.
+the same approach is the next step for Használtautó.hu.
+
+Kleinanzeigen's search pages *were* open to this sandbox at first (unlike
+Tesla/Használtautó.hu) — two working fetches, real data both times — but a
+handful of requests in, its own anti-abuse system returned a temporary
+"IP-Bereich gesperrt" (IP-range blocked) page, unprompted by anything this
+project did beyond ordinary exploratory probing. That's why `parse_item()`
+is verified against a saved response rather than a fresh live one, and why
+`kleinanzeigen.py`'s `REQUEST_DELAY_SECONDS` is more conservative than
+`autoscout24.py`'s — a starting point to tune, not a guarantee it's enough.
+Whatever runs this for real should expect the same block to recur if hit
+too hard, and go easy on it.
 
 Not started: analysis layer (Phase 3), dashboard (Phase 4), deployment (Phase 5).
 
@@ -81,4 +104,5 @@ uv run car-tracker init-db    # creates car_tracker.db (SQLite) in the cwd
 uv run car-tracker tesla-raw-sample --model model_y --country DE   # needs network
 uv run car-tracker scrape --source tesla --model model_y --country DE --huf-rate 0.00256  # needs network
 uv run car-tracker scrape --source autoscout24 --model model_y --country AT --max-pages 2  # works today
+uv run car-tracker scrape --source kleinanzeigen --model model_y --country DE --max-pages 1  # works, but go easy on it (see README)
 ```

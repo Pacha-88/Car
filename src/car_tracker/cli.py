@@ -13,9 +13,10 @@ from car_tracker.normalize.currency import to_eur
 from car_tracker.normalize.variant import normalize_variant
 from car_tracker.sources.autoscout24 import AutoScout24Source
 from car_tracker.sources.base import RawListing
+from car_tracker.sources.kleinanzeigen import KleinanzeigenSource
 from car_tracker.sources.tesla import TeslaSource
 
-SOURCES = {"tesla": TeslaSource, "autoscout24": AutoScout24Source}
+SOURCES = {"tesla": TeslaSource, "autoscout24": AutoScout24Source, "kleinanzeigen": KleinanzeigenSource}
 COUNTRIES = ["DE", "AT", "HU"]
 MODELS = ["model_y", "model_3"]
 
