@@ -6,6 +6,7 @@ import argparse
 import json
 from collections import defaultdict
 from datetime import datetime
+from pathlib import Path
 
 from sqlalchemy import func, select
 
@@ -185,7 +186,13 @@ def cmd_export(args: argparse.Namespace) -> None:
         "latestScrapeDate": latest_scrape_date.isoformat() if latest_scrape_date else None,
         "listings": listings_out,
     }
-    with open(args.out, "w", encoding="utf-8") as f:
+    # The default target (frontend/public/data/) doesn't exist in a fresh
+    # clone: the export is gitignored generated data, and git doesn't track
+    # empty directories. Create the path rather than making every caller -
+    # CI included - remember to mkdir first.
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as f:
         json.dump(payload, f)
     print(f"exported {len(listings_out)} active listings to {args.out}")
 

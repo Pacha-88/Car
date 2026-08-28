@@ -8,6 +8,7 @@ through cmd_scrape_all's real code path, not just that it calls functions.
 from __future__ import annotations
 
 import argparse
+import json
 from datetime import date
 
 import pytest
@@ -120,6 +121,22 @@ def test_rates_for_country_fetches_ecb_for_non_eurozone_country(monkeypatch):
     monkeypatch.setattr(cli, "fetch_latest_rates", lambda: (date(2026, 8, 28), {"HUF": 0.0027, "USD": 0.86}))
     rates = cli._rates_for_country("HU", huf_rate_override=None)
     assert rates == {"EUR": 1.0, "HUF": 0.0027, "USD": 0.86}
+
+
+def test_export_creates_missing_parent_directories(isolated_db, tmp_path):
+    """Regression: the first real CI run died here with FileNotFoundError.
+
+    frontend/public/data/ doesn't exist in a fresh clone - the export it
+    holds is gitignored generated data, and git doesn't track empty
+    directories - so export must create the path, not assume it.
+    """
+    out = tmp_path / "frontend" / "public" / "data" / "listings.json"
+    assert not out.parent.exists()
+
+    cli.cmd_export(argparse.Namespace(out=str(out)))
+
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["listings"] == []  # empty DB, but the file is well-formed
 
 
 def test_scrape_targets_only_reference_real_sources_and_models():

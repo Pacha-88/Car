@@ -83,6 +83,29 @@ deploy). After that it's live at `https://<your-github-username>.github.io/<repo
 - Supabase's free tier pauses a project after a week with zero connections —
   a daily scrape keeps it active on its own, nothing to do here.
 
+## Fixed after the first live run
+
+The first real GitHub Actions run failed, and surfaced two bugs that local
+testing had missed. Both are fixed; recorded here because the second one is
+easy to reintroduce.
+
+- **`DuplicatePreparedStatement: prepared statement "_pg3_0" already
+  exists`** — killed 24 of 32 scrape combos. Supabase's pooler on port 6543
+  is PgBouncer in *transaction* mode: it hands each transaction whatever
+  server connection happens to be free, so psycopg3's automatic server-side
+  `PREPARE` re-prepares the same statement name on a connection that
+  already has it. Fixed in `db/session.py` by disabling prepared statements
+  (`prepare_threshold=None`) for every psycopg URL. **This is why the
+  original local Postgres test passed and production still broke** — that
+  test used a *direct* connection, with no pooler in the path. Re-verified
+  against a real local PgBouncer in transaction mode: reproduced the exact
+  failure first, then ran 8 consecutive scrapes and a full `scrape-all`
+  clean.
+- **`FileNotFoundError: frontend/public/data/listings.json`** — the export
+  target directory doesn't exist in a fresh clone, since the file it holds
+  is gitignored generated data and git doesn't track empty directories.
+  `export` now creates the path.
+
 ## What was verified before this was written
 
 - The full pipeline (`init-db` → `scrape` → `export`) run end-to-end against
