@@ -55,16 +55,22 @@ branch is set as default in **Settings → General → Default branch**.
 
 ## The two sources that need your own machine
 
-Tesla.com and Használtautó.hu refuse datacenter traffic outright, so the
-GitHub Actions run can never reach them — verified from two independent
-datacenter networks. Használtautó.hu returns Cloudflare's *"Sorry, you have
-been blocked"* (the hard WAF block, not the solvable "Just a moment..." JS
-challenge) and Tesla.com returns Akamai *"Access Denied"*. Neither is a
-fingerprint problem: a fuller header set and a real headless browser both
-get the same page, because only the origin of the request matters.
+Tesla.com (Akamai) and Használtautó.hu (Cloudflare) run bot protection
+that scores *how* you connect, not just where from. A plain Python client
+is refused even from a home connection; a real browser on that same
+connection is served normally. `scrape-local` bridges that by escalating
+only as far as each site forces it (see `sources/fetch.py`):
 
-Your home connection serves both sites normally, so those two run from
-there instead:
+1. A real Chrome **TLS fingerprint** (`curl_cffi`) — no browser needed,
+   and enough whenever the verdict turns on the handshake alone.
+2. A real **browser** (Playwright) when a site still shows a challenge:
+   your installed Google Chrome in its new headless mode when present
+   (far less detectable than a bundled headless shell), automation flags
+   off, and a persistent profile so a solved Cloudflare challenge's
+   clearance cookie carries over to the next page and the next day.
+
+The GitHub Actions run can't do this from a datacenter IP, so those two
+sources run from your machine instead:
 
 ```
 car-tracker scrape-local
@@ -73,6 +79,19 @@ car-tracker scrape-local
 It scrapes only those two sources and writes to the same database, so the
 two runs never disturb each other's data — neither retires the other's
 listings just by not having looked at them.
+
+**If a site still blocks the headless browser**, the last lever is a
+*visible* one — a real Chrome window you could watch clear the challenge:
+
+```
+CAR_TRACKER_HEADED=1 car-tracker scrape-local
+```
+
+The one-click scripts run headless; set that variable before them (or edit
+the script's run line) if you need the visible fallback. These are
+enterprise-grade defenses, so this is best-effort — if even a visible
+browser is refused, that site may simply not be scriptable from your
+setup, and the dashboard keeps working with the other sources.
 
 ### One-click setup (recommended)
 

@@ -79,7 +79,11 @@ RESULT=${PIPESTATUS[0]}
 if grep -q "playwright install" "$LOG" 2>/dev/null; then
   echo
   echo "Egy oldal valódi böngészőt igényel — letöltöm egyszer (~150 MB), majd újrapróbálom..."
-  uv tool run --from "$FROM_SPEC" playwright install chromium
+  # Csak a beepitett Chromiumot toltjuk le (tartaleknak). Ha a gepen mar
+  # van Google Chrome, a kod futasidoben AZT hasznalja (channel="chrome",
+  # uj headless mod), telepites nelkul - ez kevesbe feltuno. A "python -m"
+  # forma az uv "executable not provided by package" figyelmeztetes nelkul.
+  uv tool run --from "$FROM_SPEC" python -m playwright install chromium
   echo
   uv tool run --from "$FROM_SPEC" car-tracker scrape-local 2>&1 | tee "$LOG"
   RESULT=${PIPESTATUS[0]}

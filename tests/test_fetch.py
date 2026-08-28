@@ -110,7 +110,7 @@ def test_missing_browser_binary_becomes_an_actionable_message(monkeypatch):
     trigger the automatic download, so the wording is load-bearing."""
 
     class _FakeChromium:
-        def launch(self, **kwargs):
+        def launch_persistent_context(self, **kwargs):
             raise RuntimeError("BrowserType.launch: Executable doesn't exist at /somewhere")
 
     class _FakePlaywright:
@@ -137,3 +137,68 @@ def test_missing_browser_binary_becomes_an_actionable_message(monkeypatch):
     message = str(exc.value)
     assert "playwright install" in message
     assert "Executable doesn't exist" in message  # the real cause is preserved, not swallowed
+
+
+# --- rate-limit backoff (added after Tesla's API returned 429 on a burst) ---
+
+def test_impersonation_retries_a_429_then_succeeds(monkeypatch):
+    """429 is 'slow down', not 'go away' - a backed-off retry should get the
+    real page rather than wasting a browser launch on a rate limit."""
+    calls = {"n": 0}
+
+    class _Resp:
+        def __init__(self, status, text):
+            self.status_code = status
+            self.text = text
+
+    def _fake_get(url, **kw):
+        calls["n"] += 1
+        return _Resp(429, "rate limited") if calls["n"] == 1 else _Resp(200, LISTINGS_HTML)
+
+    import types
+
+    fake_cffi = types.ModuleType("curl_cffi")
+    fake_cffi.requests = types.SimpleNamespace(get=_fake_get)
+    monkeypatch.setitem(__import__("sys").modules, "curl_cffi", fake_cffi)
+    monkeypatch.setattr(fetch.time, "sleep", lambda _s: None)  # don't actually wait
+
+    result = fetch._fetch_with_impersonation("https://example.com", accept_language="en", timeout=5)
+    assert result == (200, LISTINGS_HTML)
+    assert calls["n"] == 2  # retried exactly once past the 429
+
+
+def test_impersonation_gives_up_after_persistent_429(monkeypatch):
+    """A site that just keeps rate-limiting should return the last 429 so
+    the caller escalates, not loop forever."""
+    class _Resp:
+        status_code = 429
+        text = "rate limited"
+
+    import types
+
+    fake_cffi = types.ModuleType("curl_cffi")
+    fake_cffi.requests = types.SimpleNamespace(get=lambda url, **kw: _Resp())
+    monkeypatch.setitem(__import__("sys").modules, "curl_cffi", fake_cffi)
+    monkeypatch.setattr(fetch.time, "sleep", lambda _s: None)
+
+    status, _ = fetch._fetch_with_impersonation("https://example.com", accept_language="en", timeout=5)
+    assert status == 429
+
+
+def test_browser_launch_prefers_real_chrome_then_falls_back(monkeypatch):
+    """channel='chrome' (real Chrome, new-headless) is tried first; if it's
+    not installed, the bundled Chromium (channel=None) is the fallback."""
+    tried = []
+
+    class _FakeChromium:
+        def launch_persistent_context(self, **kwargs):
+            tried.append(kwargs.get("channel"))
+            if kwargs.get("channel") == "chrome":
+                raise RuntimeError("Chromium distribution 'chrome' is not found")
+            return object()  # bundled Chromium launches fine
+
+    context = fetch._launch_browser(
+        __import__("types").SimpleNamespace(chromium=_FakeChromium()), headed=False
+    )
+    assert context is not None
+    assert tried == ["chrome", None]  # real Chrome first, then bundled

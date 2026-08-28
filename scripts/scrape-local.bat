@@ -71,7 +71,7 @@ findstr /C:"playwright install" "%LOG%" >nul 2>nul
 if errorlevel 1 goto :after_run
 echo.
 echo Egy oldal valodi bongeszot igenyel - letoltom egyszer (~150 MB), majd ujraprobalom...
-uv tool run --from "%FROM_SPEC%" playwright install chromium
+uv tool run --from "%FROM_SPEC%" python -m playwright install chromium
 echo.
 uv tool run --from "%FROM_SPEC%" car-tracker scrape-local > "%LOG%" 2>&1
 set "RESULT=%ERRORLEVEL%"
