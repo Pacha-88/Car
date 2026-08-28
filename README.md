@@ -31,68 +31,64 @@ module, and an interactive dashboard.
 chassis/currency normalization, ECB feed parser, CLI (`init-db`, `scrape`,
 `tesla-raw-sample`), all unit-tested.
 
-**Phase 2 (more sources): in progress.**
+**Phase 2 (all four sources): done.** Every source is verified against a
+real response, not guessed — either fetched live from this sandbox, or
+(where the sandbox itself is blocked — see below) fetched by the project
+owner from a normal connection and fed back in, then checked into
+`tests/fixtures/` so the parsing logic stays regression-tested against real
+shapes rather than synthetic ones.
 
-- **Tesla.com: done, verified against a real response.** This sandbox
-  itself can't reach tesla.com (Akamai 403s it, likely IP-reputation-based —
-  see below), but the project owner ran the exact query this module builds
-  from a normal home connection and shared the real response; `parse_item()`
-  was rewritten against real field names (several original guesses were
-  wrong — e.g. the odometer unit field is `OdometerType`/`OdometerTypeShort`,
-  not the guessed `OdometerTypeUnit`; there's no `VehicleConfig` wrapper).
-  Also gained `first_registration` (was hardcoded `None`), real photo URLs
-  (`VehiclePhotos`, guessed empty before), and `color` (`PAINT`). Covered by
-  `tests/test_tesla.py`, modeled on the real shapes rather than a byte-exact
-  capture (the response was shared as a pasted object-tree, not raw JSON).
-  The listing detail URL is still an unconfirmed guessed pattern — no direct
-  URL field showed up in the sample.
-- **AutoScout24: done, verified end to end against live data** — `parse_item()`
-  reads the `__NEXT_DATA__` JSON Next.js embeds in the search-results page
-  (not HTML scraping), tested against real fixture data
-  (`tests/fixtures/autoscout24_search_sample.html`) and via a live
-  `car-tracker scrape` run. Covers DE/AT/NL/BE/IT/ES/FR/LU — confirmed HU
-  returns zero results (AutoScout24 doesn't meaningfully cover Hungary,
-  which is why Használtautó.hu is a separate source rather than redundant).
-- **Kleinanzeigen: done, DE only.** No JSON blob here (not a JS-framework
-  page) — `parse_item()` regexes the server-rendered `.aditem` result cards
-  directly, which is more fragile than AutoScout24's approach (a markup
-  redesign breaks this silently). Verified against a real response
-  (`tests/fixtures/kleinanzeigen_search_sample.html`): confirmed the
-  `/s-autos/{slug}/k0c216` URL and the `seite:N` pagination pattern (read
-  off the page's own pagination links), and two real gotchas worth having
-  caught before they corrupted data — search results mix in "wanted"
-  ("Gesuch") ads among the for-sale ones, and some listings have no fixed
-  price at all ("VB" alone); both are filtered out in `parse_item()`, the
-  first by Kleinanzeigen's own tag rather than any guessing. No structured
-  trim field like AutoScout24's, so the ad title feeds the same central
-  `normalize_variant()` every other source uses.
-- Picked up `power_kw` and `color` along the way (neither was in the
-  original schema) — see `docs/DASHBOARD_SPEC.md`.
-- Not started: Használtautó.hu.
+| Source | Coverage | How it reads listings | Verified how |
+| --- | --- | --- | --- |
+| `tesla.py` | any market with a `MARKET_REFERENCE_POINTS` entry (DE/AT/HU) | Tesla's own inventory JSON API | real response the owner fetched and pasted in |
+| `autoscout24.py` | DE/AT/NL/BE/IT/ES/FR/LU (confirmed HU is empty — AutoScout24 doesn't meaningfully cover Hungary) | `__NEXT_DATA__` JSON a Next.js page embeds | live fetch + live `car-tracker scrape` run, from this sandbox |
+| `kleinanzeigen.py` | DE only | regex over server-rendered `.aditem` cards (no JSON blob, more fragile than the two above) | live fetch from this sandbox, saved as a fixture before the sandbox got rate-limited (see below) |
+| `hasznaltauto.py` | HU only | regex over server-rendered listing rows, split on each row's opening tag rather than matched start/end (deeply nested `<div>`s, no unique closing marker) | real response the owner fetched and pasted in |
 
-**Known gap:** Tesla.com and Használtautó.hu both block this sandbox's own
-outbound requests at the site level regardless of the org network policy —
-Tesla via Akamai (403s even a plain homepage GET, likely IP-reputation-based),
-Használtautó.hu via Cloudflare Bot Management (403s its homepage too). A
-real-browser-fingerprint test (Playwright/Chromium) to see if that fares
-better was inconclusive: this sandbox's Chromium can't complete a trusted
-HTTPS connection to *any* external host yet (confirmed against pypi.org too,
-which is fully allowlisted) — a gap in the sandbox's own proxy/CA plumbing
-for browser engines, separate from the org policy and from Tesla's block,
-and not something to paper over with `--ignore-certificate-errors`. Tesla
-got unblocked by fetching from a normal home connection instead (see above);
-the same approach is the next step for Használtautó.hu.
+Two sources needed the field-mapping fixed against reality after being
+built from best-effort guesses: Tesla's `parse_item()` had several wrong
+field names (the odometer unit field is `OdometerType`/`OdometerTypeShort`,
+not the guessed `OdometerTypeUnit`; there's no `VehicleConfig` wrapper) and
+was missing `first_registration` (hardcoded `None`), real photo URLs
+(guessed empty, `VehiclePhotos` has them directly) and `color` (`PAINT`).
+The variant-bucketing heuristic (`normalize/variant.py`) also had a real bug
+caught by Használtautó.hu data: a title stating "Long Range AWD" up front
+but mentioning "Performance" later as a cosmetic package name was
+misclassified, because the original heuristic checked for "performance"
+unconditionally before anything else — fixed to leftmost-keyword-wins.
 
-Kleinanzeigen's search pages *were* open to this sandbox at first (unlike
-Tesla/Használtautó.hu) — two working fetches, real data both times — but a
-handful of requests in, its own anti-abuse system returned a temporary
-"IP-Bereich gesperrt" (IP-range blocked) page, unprompted by anything this
-project did beyond ordinary exploratory probing. That's why `parse_item()`
-is verified against a saved response rather than a fresh live one, and why
+Also picked up `power_kw` and `color` along the way (neither was in the
+original schema, both turned out to be readily available) — see
+`docs/DASHBOARD_SPEC.md`.
+
+**Known gap — this development sandbox's own network limits:** Tesla.com
+and Használtautó.hu both block this sandbox's outbound requests at the site
+level regardless of org network policy — Tesla via Akamai (403s even a
+plain homepage GET, likely IP-reputation-based), Használtautó.hu via
+Cloudflare Bot Management. A real-browser-fingerprint test (Playwright/
+Chromium) to see if that fares better was inconclusive: this sandbox's
+Chromium can't complete a trusted HTTPS connection to *any* external host
+yet (confirmed against pypi.org too, fully allowlisted) — a gap in the
+sandbox's own proxy/CA plumbing for browser engines, not something to paper
+over with `--ignore-certificate-errors`. Both sources got unblocked by
+fetching from the owner's normal home connection instead.
+
+Kleinanzeigen's search pages *were* open to this sandbox at first — two
+working live fetches — but a handful of requests in, its own anti-abuse
+system returned a temporary "IP-Bereich gesperrt" (IP-range blocked) page,
+unprompted by anything beyond ordinary exploratory probing. That's why
 `kleinanzeigen.py`'s `REQUEST_DELAY_SECONDS` is more conservative than
-`autoscout24.py`'s — a starting point to tune, not a guarantee it's enough.
-Whatever runs this for real should expect the same block to recur if hit
-too hard, and go easy on it.
+`autoscout24.py`'s and `hasznaltauto.py`'s — a starting point to tune, not
+a guarantee it's enough. Whatever runs any of these for real should expect
+this class of block to recur if hit too hard, and go easy on it — none of
+this sandbox's findings about *which* sources are more or less sensitive
+should be read as settled; they're one afternoon's data point each.
+
+**Also confirmed, not yet acted on:** battery SoH (State of Health) shows up
+as free text on both Kleinanzeigen and Használtautó.hu titles/descriptions
+(e.g. "91,8 SOH", "SOH: 95.5%") — real and not rare, but formatting isn't
+consistent enough from a couple of examples to extract with confidence; see
+`docs/DASHBOARD_SPEC.md`.
 
 Not started: analysis layer (Phase 3), dashboard (Phase 4), deployment (Phase 5).
 
@@ -105,4 +101,5 @@ uv run car-tracker tesla-raw-sample --model model_y --country DE   # needs netwo
 uv run car-tracker scrape --source tesla --model model_y --country DE --huf-rate 0.00256  # needs network
 uv run car-tracker scrape --source autoscout24 --model model_y --country AT --max-pages 2  # works today
 uv run car-tracker scrape --source kleinanzeigen --model model_y --country DE --max-pages 1  # works, but go easy on it (see README)
+uv run car-tracker scrape --source hasznaltauto --model model_y --country HU --max-pages 1  # needs network (blocked from this sandbox)
 ```

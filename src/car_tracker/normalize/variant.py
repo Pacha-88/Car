@@ -15,10 +15,18 @@ Two different kinds of real input feed this:
   keeps it as an English loanword even in a German TrimName, but that's
   unverified).
 
+Matching is leftmost-wins, not fixed-priority: a real Használtautó.hu title,
+"TESLA MODEL Y Long Range AWD (Automata) Kerámia bevonat Performance
+díszítésekkel...", states the actual trim ("Long Range AWD") up front and
+only mentions "Performance" later as a cosmetic add-on package name — an
+earlier fixed-priority version of this function checked for "performance"
+unconditionally first and misclassified it. Real ad titles put the actual
+trim near the start, so whichever keyword appears earliest is trusted.
+
 Known gap: a handful of markets/years sold a "Long Range RWD" variant, which
-this buckets as "long_range_awd" (checking "long range" before drivetrain)
-since AWD is by far the common case — will misclassify that specific
-combination if it shows up in real data.
+this still buckets as "long_range_awd" whenever "long range" appears before
+any RWD-signalling phrase, since AWD is by far the common case — will
+misclassify that specific combination if it shows up in real data.
 """
 
 from __future__ import annotations
@@ -32,6 +40,7 @@ _EXACT_CODES = {
     "lr_awd": LONG_RANGE_AWD,
     "rwd": RWD,
 }
+_RWD_PHRASES = ("rwd", "rear-wheel drive", "standard range")
 
 
 def normalize_variant(text: str | None) -> str | None:
@@ -40,10 +49,20 @@ def normalize_variant(text: str | None) -> str | None:
     lowered = text.lower().strip()
     if lowered in _EXACT_CODES:
         return _EXACT_CODES[lowered]
-    if "performance" in lowered:
-        return PERFORMANCE
-    if "long range" in lowered:
-        return LONG_RANGE_AWD
-    if "rwd" in lowered or "rear-wheel drive" in lowered or "standard range" in lowered:
-        return RWD
-    return OTHER
+
+    matches: list[tuple[int, str]] = []
+    performance_idx = lowered.find("performance")
+    if performance_idx != -1:
+        matches.append((performance_idx, PERFORMANCE))
+    long_range_idx = lowered.find("long range")
+    if long_range_idx != -1:
+        matches.append((long_range_idx, LONG_RANGE_AWD))
+    for phrase in _RWD_PHRASES:
+        idx = lowered.find(phrase)
+        if idx != -1:
+            matches.append((idx, RWD))
+            break
+
+    if not matches:
+        return OTHER
+    return min(matches, key=lambda pair: pair[0])[1]
