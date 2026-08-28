@@ -1,8 +1,9 @@
 # Dashboard UI spec (derived from reference screenshots/video)
 
 Source: screenshots from the creator's original personal tool (video walkthrough
-shared 2026-08-28). This is the target look/behavior for Phase 4. Everything
-below is observed from those screenshots, not invented.
+shared 2026-08-28). This was the target look/behavior for Phase 4 (built,
+see "Resolved in Phase 4" below for what shipped as-is vs. simplified).
+Everything below is observed from those screenshots, not invented.
 
 ## Model switcher
 Two tabs top-left: **Model Y** / **Model 3**. Switching re-scopes everything
@@ -150,8 +151,34 @@ Not in the original schema, needed for Phase 4 parity:
   once real data is flowing.
 - Thin-bucket rule: `n < min_bucket_size` (default 10).
 
-## Open questions for when we build Phase 4
+## Resolved in Phase 4 (`frontend/`)
+Built to spec, with a few deliberate simplifications rather than settled
+"no":
+- **"held €X for N days"** hover-card feature — implemented as specified;
+  reads `0`/same-day as "held at this price since today" rather than
+  "0 days", which reads more naturally.
+- **"not yet tracked" grid badge** — not added as a separate badge; a
+  first-seen listing already shows "NEW" and its hover card already
+  degrades to "held ... since today", so a second badge saying the same
+  thing seemed redundant. Revisit if that turns out to read as confusing
+  rather than redundant once this runs against real day-over-day scrapes.
+- **Description snippet in hover card** — not added; `description_raw` was
+  never wired into `RawListing` for any source (see field list above), so
+  there's nothing to show yet.
+- **FX rate in the chart caption** — not added; the caption states the
+  color encoding and interaction hint but not the day's HUF/€ rate. Minor,
+  easy to add once `fx/ecb.py`'s rate is threaded through the export.
+- **"Versus buying new" insight card** and the **shaded confidence band**
+  on the depreciation chart — not implemented, matching the Phase 3 gap
+  already documented in the README (no new-car price reference point from
+  any of the four used-listing sources).
+- **Trend line**: binned-median (Phase 3's choice), not the curved
+  LOESS-style line in the reference screenshots — already flagged as a
+  reasonable-default, not a settled choice; see README's Phase 3 section.
+
+## Open questions for Phase 5+
 - Where `power_kw` / `color` / `battery_soh_percent` actually come from per
   source (some sites won't have all of these) — see the field list above.
 - Per-listing outlier/implausible-price exclusion rule (the other half of
-  `excluded`, see above).
+  `excluded`; the depreciation module currently only excludes at the
+  bucket level via `is_thin`, not per individual listing).

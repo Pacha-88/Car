@@ -20,9 +20,14 @@ module, and an interactive dashboard.
   daily rates from the ECB via `fx/ecb.py`) and chassis-generation detection
   — Model 3's refresh is codenamed "Highland", Model Y's is "Juniper", both
   vs. "Legacy" pre-refresh (`normalize/chassis.py`).
-- **Frontend** (not started yet): React, reading from Supabase directly
-  (its free tier includes an auto-generated REST API, so no custom backend
-  server is needed).
+- **Frontend** (`frontend/`): Vite + React 19 + TypeScript + Tailwind v4 +
+  Recharts, reading a static `car-tracker export` JSON snapshot
+  (`frontend/public/data/listings.json`, gitignored — regenerate after every
+  scrape). Trend and depreciation math (`src/lib/trend.ts`,
+  `src/lib/depreciation.ts`) are direct TypeScript ports of the Python
+  analysis layer, computed client-side so filtering recomputes instantly —
+  Supabase (Phase 5) has no compute layer of its own, so this stays
+  client-side even after the backend moves off flat files.
 - **Scheduling** (not started yet): GitHub Actions cron, daily.
 
 ## Status
@@ -120,7 +125,39 @@ buckets, correctly flagging every bucket thin at this tiny sample size —
 real depreciation numbers need real scrape volume, which this doesn't have
 yet (Phase 5).
 
-Not started: dashboard (Phase 4), deployment (Phase 5).
+**Phase 4 (dashboard): done.** `frontend/` — model switcher (Model Y / Model
+3), full filter bar (country incl. rest-of-EU grouping, marketplace, seller
+type, variant, chassis generation, colour, year/price/mileage range sliders,
+"new since last scrape" and watchlist-only toggles), price-vs-mileage
+scatter chart with a binned-median trend line and per-listing hover cards
+("held at this price for N days"), a depreciation-by-model-year module with
+the `steepest_drop`/`curve_flattens_at`/`cheapest_to_own` insight cards from
+Phase 3, and a sortable/paginated listing grid with photos and a
+localStorage-backed watchlist. Dark/light theming throughout, built to the
+`dataviz` skill's palette/contrast/mark-spec rules.
+
+Verified with a real (non-mocked) pooled export — 342 Model Y listings
+across all four sources — driven headlessly with Playwright: chart, filters,
+depreciation insights and grid all render correctly against real computed
+numbers. Two real issues surfaced this way and got fixed: filter chips'
+active state initially had too little contrast against inactive ones
+(fixed in `Chip.tsx` — solid fill instead of a 15%-opacity tint), and a
+stray `/favicon.ico` 404 (fixed by inlining an SVG data-URI icon in
+`index.html` rather than shipping a binary asset). All other console
+errors seen in this sandbox are external listing-photo CDNs
+(`autoscout24.net`, `hasznaltautocdn.com`, `tesla.com`, `kleinanzeigen.de`)
+being unreachable from here — the same class of network restriction noted
+throughout Phase 2, not an app bug; the `onError` fallback hides the broken
+`<img>` cleanly (a plain placeholder box, no broken-image icon) so this is
+just a something-to-expect-in-this-sandbox note, not a real-deployment
+concern.
+
+Every listing in the current demo export shows a "NEW" badge — expected,
+not a bug: all of it came from a single scrape batch with no prior scrape
+to diff against, and "new" is defined relative to the previous scrape date.
+
+Not started: deployment (Phase 5) — Supabase, GitHub Actions daily
+scheduling, going live.
 
 ## Running it
 
@@ -132,4 +169,12 @@ uv run car-tracker scrape --source tesla --model model_y --country DE --huf-rate
 uv run car-tracker scrape --source autoscout24 --model model_y --country AT --max-pages 2  # works today
 uv run car-tracker scrape --source kleinanzeigen --model model_y --country DE --max-pages 1  # works, but go easy on it (see README)
 uv run car-tracker scrape --source hasznaltauto --model model_y --country HU --max-pages 1  # needs network (blocked from this sandbox)
+uv run car-tracker export --out frontend/public/data/listings.json         # dumps active listings for the dashboard
+```
+
+Then, in `frontend/`:
+
+```
+npm install
+npm run dev    # dashboard at http://localhost:5173
 ```
