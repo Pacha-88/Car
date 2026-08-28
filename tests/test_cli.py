@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy import select
 
 from car_tracker import cli
-from car_tracker.db.models import Listing
+from car_tracker.db.models import Listing, ListingSnapshot
 from car_tracker.db.session import get_engine, init_db, session_scope
 from car_tracker.sources.base import RawListing, Source
 
@@ -329,3 +329,40 @@ def test_scrape_targets_only_reference_real_sources_and_models():
     for target in cli.SCRAPE_TARGETS.values():
         assert set(target["models"]) <= set(cli.MODELS)
         assert target["countries"], "every source must scrape at least one country"
+
+
+def test_export_drops_entries_too_cheap_to_be_a_car(isolated_db, tmp_path):
+    """Marketplaces list referral links and deposits alongside cars. A real
+    1 EUR "Tesla Empfehlungslink" entered the median price, the trend fit and
+    the depreciation curve before this filter existed."""
+    seen_at = datetime(2026, 8, 28)
+    with session_scope(get_engine(isolated_db)) as session:
+        for listing_id, price in (("junk:1", 1.0), ("real:1", 30_000.0)):
+            session.add(
+                Listing(
+                    id=listing_id,
+                    source="kleinanzeigen",
+                    source_listing_id=listing_id,
+                    model="model_y",
+                    country="DE",
+                    url="https://example.com",
+                    first_seen_at=seen_at,
+                    last_seen_at=seen_at,
+                    is_active=True,
+                )
+            )
+            session.add(
+                ListingSnapshot(
+                    listing_id=listing_id,
+                    observed_at=seen_at,
+                    price_original=price,
+                    currency_original="EUR",
+                    price_eur=price,
+                    mileage_km=50_000,
+                )
+            )
+
+    out = tmp_path / "listings.json"
+    cli.cmd_export(argparse.Namespace(out=str(out)))
+    exported = {l["id"] for l in json.loads(out.read_text(encoding="utf-8"))["listings"]}
+    assert exported == {"real:1"}

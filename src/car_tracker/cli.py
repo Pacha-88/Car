@@ -232,6 +232,21 @@ def _retire_unseen(
     return retired
 
 
+# Marketplaces carry entries that aren't cars: referral links, accessory
+# ads, deposit placeholders. A real one showed up as a 1 EUR "Tesla
+# Empfehlungslink 1.000 Freikilometer" and, being a listing like any other,
+# it entered the median price, the trend fit and the depreciation curve.
+# No used Tesla sells for four figures, so a floor separates them cleanly
+# without risking a real bargain (the cheapest genuine car in the same
+# dataset was ~21.000 EUR).
+MIN_PLAUSIBLE_PRICE_EUR = 3_000
+
+
+def is_plausible_car(price_eur: float) -> bool:
+    """False for entries too cheap to be an actual used Tesla."""
+    return price_eur >= MIN_PLAUSIBLE_PRICE_EUR
+
+
 def cmd_export(args: argparse.Namespace) -> None:
     """Dump the DB to a static JSON file the frontend can fetch directly.
 
@@ -254,6 +269,8 @@ def cmd_export(args: argparse.Namespace) -> None:
             if not snapshots:
                 continue
             latest = max(snapshots, key=lambda s: s.observed_at)
+            if not is_plausible_car(latest.price_eur):
+                continue
             listings_out.append(
                 {
                     "id": listing.id,

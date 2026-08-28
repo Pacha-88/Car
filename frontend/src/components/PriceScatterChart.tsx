@@ -1,11 +1,10 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   CartesianGrid,
   Line,
   ComposedChart,
   ResponsiveContainer,
   Scatter,
-  Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
@@ -59,6 +58,13 @@ export function PriceScatterChart({
   const years = useMemo(() => [...new Set(points.map((p) => p.year))].sort(), [points]);
   const maxYear = years[years.length - 1];
 
+  // Hover is tracked per mark rather than left to Recharts. Its tooltip
+  // resolves by x-axis position, so two cars at the same mileage but very
+  // different prices both showed whichever one Recharts picked for that x -
+  // the "wrong photo on hover" report. Anchoring to the mark the cursor is
+  // actually over is the only way to make the card always match the dot.
+  const [active, setActive] = useState<{ point: ScatterPoint; x: number; y: number } | null>(null);
+
   const trend = useMemo(
     () => binnedMedianTrend(points.map((p) => [p.mileageKm, p.priceEur] as [number, number]), 10_000),
     [points],
@@ -82,6 +88,9 @@ export function PriceScatterChart({
         {years.length > 1 && <YearLegend years={years} maxYear={maxYear} />}
       </div>
 
+      {/* `relative` anchors the hover card, which is positioned from the
+          hovered mark's own SVG coordinates. */}
+      <div className="relative" onMouseLeave={() => setActive(null)}>
       <ResponsiveContainer width="100%" height={420}>
         <ComposedChart margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
           <CartesianGrid stroke="var(--gridline)" strokeDasharray="0" vertical={false} />
@@ -102,11 +111,6 @@ export function PriceScatterChart({
             stroke="var(--baseline)"
             tick={{ fill: "var(--text-muted)", fontSize: 11 }}
             width={56}
-          />
-          <Tooltip
-            cursor={{ stroke: "var(--baseline)", strokeDasharray: "3 3" }}
-            content={<HoverCard onToggleWatchlist={onToggleWatchlist} watchlist={watchlist} dealScores={dealScores} />}
-            trigger="hover"
           />
           {showTrendLine && (
             <Line
@@ -129,10 +133,13 @@ export function PriceScatterChart({
             shape={(props: unknown) => {
               const p = props as { cx: number; cy: number; payload: ScatterPoint };
               const isWatchlisted = watchlist.has(p.payload.listing.id);
+              const isActive = active?.point.listing.id === p.payload.listing.id;
               return (
                 <g
                   style={{ cursor: "pointer" }}
                   onClick={() => window.open(p.payload.listing.url, "_blank", "noopener")}
+                  onMouseEnter={() => setActive({ point: p.payload, x: p.cx, y: p.cy })}
+                  onMouseLeave={() => setActive((cur) => (cur?.point.listing.id === p.payload.listing.id ? null : cur))}
                 >
                   <circle cx={p.cx} cy={p.cy} r={HIT_RADIUS} fill="transparent" pointerEvents="all" />
                   {isWatchlisted && (
@@ -142,6 +149,18 @@ export function PriceScatterChart({
                       r={DOT_RADIUS + 3}
                       fill="none"
                       stroke="var(--series-1)"
+                      strokeWidth={2}
+                    />
+                  )}
+                  {/* Ring on the hovered mark, so it's unmistakable which dot
+                      the card belongs to. */}
+                  {isActive && (
+                    <circle
+                      cx={p.cx}
+                      cy={p.cy}
+                      r={DOT_RADIUS + 5}
+                      fill="none"
+                      stroke="var(--text-primary)"
                       strokeWidth={2}
                     />
                   )}
@@ -159,6 +178,28 @@ export function PriceScatterChart({
           />
         </ComposedChart>
       </ResponsiveContainer>
+
+        {active && (
+          <div
+            className="pointer-events-none absolute z-10"
+            style={{
+              // Offset from the mark, flipping near the right/bottom edges so
+              // the card stays inside the plot.
+              left: active.x > 900 ? undefined : active.x + 16,
+              right: active.x > 900 ? 16 : undefined,
+              top: active.y > 220 ? undefined : active.y + 16,
+              bottom: active.y > 220 ? 16 : undefined,
+            }}
+          >
+            <HoverCard
+              point={active.point}
+              watchlist={watchlist}
+              onToggleWatchlist={onToggleWatchlist}
+              dealScores={dealScores}
+            />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -181,24 +222,17 @@ function YearLegend({ years, maxYear }: { years: number[]; maxYear: number }) {
 }
 
 interface HoverCardProps {
-  active?: boolean;
-  // The trend line's points are plain {mileageKm, priceEur} - no `listing` -
-  // so the payload is only *partly* ScatterPoint-shaped. Typing it honestly
-  // is what makes the guard below obviously necessary rather than defensive.
-  payload?: { payload: Partial<ScatterPoint> }[];
+  /** The mark actually under the cursor - passed straight in, rather than
+   * looked up from a tooltip payload, so the card can never describe a
+   * different listing than the dot the ring is drawn on. */
+  point: ScatterPoint;
   watchlist: Set<string>;
   onToggleWatchlist: (id: string) => void;
   dealScores: Map<string, DealInfo>;
 }
 
-function HoverCard({ active, payload, watchlist, onToggleWatchlist, dealScores }: HoverCardProps) {
-  if (!active || !payload || payload.length === 0) return null;
-  // This chart draws two series, and Recharts hands the tooltip whichever one
-  // is under the cursor. Only the scatter carries a listing; hovering the
-  // trend line used to reach `listing.id` on undefined, which threw and (with
-  // no error boundary above it) blanked the whole dashboard.
-  const listing = payload.find((entry) => entry?.payload?.listing)?.payload.listing;
-  if (!listing) return null;
+function HoverCard({ point, watchlist, onToggleWatchlist, dealScores }: HoverCardProps) {
+  const { listing } = point;
   const isWatchlisted = watchlist.has(listing.id);
   const deal = dealScores.get(listing.id);
 
