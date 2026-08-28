@@ -1,0 +1,25 @@
+[project]
+name = "car-tracker"
+version = "0.1.0"
+description = "Daily price-tracking dashboard for used Tesla Model Y/3 listings across DE/AT/HU/EU"
+readme = "README.md"
+authors = [
+    { email = "gorfol.gabor@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.28.1",
+    "sqlalchemy>=2.0.52",
+]
+
+[project.scripts]
+car-tracker = "car_tracker:main"
+
+[build-system]
+requires = ["uv_build>=0.8.17,<0.9.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
