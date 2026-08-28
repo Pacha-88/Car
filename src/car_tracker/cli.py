@@ -12,9 +12,11 @@ from sqlalchemy import func, select
 from car_tracker.analysis.listing_status import days_at_current_price, is_new_since_last_scrape
 from car_tracker.db.models import Listing, ListingSnapshot
 from car_tracker.db.session import init_db, session_scope
+from car_tracker.fx.ecb import fetch_latest_rates
 from car_tracker.normalize.chassis import detect_chassis
-from car_tracker.normalize.currency import to_eur
+from car_tracker.normalize.currency import EUR, market_currency, to_eur
 from car_tracker.normalize.variant import normalize_variant
+from car_tracker.sources.autoscout24 import COUNTRY_CODES as AUTOSCOUT24_COUNTRIES
 from car_tracker.sources.autoscout24 import AutoScout24Source
 from car_tracker.sources.base import RawListing
 from car_tracker.sources.hasznaltauto import HasznaltautoSource
@@ -31,6 +33,18 @@ SOURCES = {
 COUNTRIES = ["DE", "AT", "HU"]
 MODELS = ["model_y", "model_3"]
 
+# Every source/model/country combo `scrape-all` covers in one run — the
+# daily-cron entry point. AutoScout24 gets its full country list (not just
+# DE/AT) since those extra eurozone markets are exactly what feeds the
+# dashboard's "Rest of EU" bucket; HU is excluded there because it returns
+# zero results (see sources/autoscout24.py's docstring).
+SCRAPE_TARGETS: dict[str, dict[str, list[str]]] = {
+    "tesla": {"models": MODELS, "countries": ["DE", "AT", "HU"]},
+    "autoscout24": {"models": MODELS, "countries": sorted(AUTOSCOUT24_COUNTRIES)},
+    "kleinanzeigen": {"models": MODELS, "countries": ["DE"]},
+    "hasznaltauto": {"models": MODELS, "countries": ["HU"]},
+}
+
 
 def cmd_init_db(args: argparse.Namespace) -> None:
     init_db()
@@ -45,6 +59,22 @@ def cmd_tesla_raw_sample(args: argparse.Namespace) -> None:
     print(json.dumps(page, indent=2))
 
 
+def _rates_for_country(country: str, *, huf_rate_override: float | None) -> dict[str, float]:
+    """EUR passthrough, plus whatever non-EUR rate this country needs.
+
+    An explicit --huf-rate always wins. Otherwise, only reaches out to the
+    ECB when the country actually needs a non-EUR rate — so e.g. a DE-only
+    manual `scrape` still works without network access to ecb.europa.eu.
+    """
+    rates_to_eur = {EUR: 1.0}
+    if huf_rate_override is not None:
+        rates_to_eur["HUF"] = huf_rate_override
+    elif market_currency(country) != EUR:
+        _, ecb_rates = fetch_latest_rates()
+        rates_to_eur.update(ecb_rates)
+    return rates_to_eur
+
+
 def cmd_scrape(args: argparse.Namespace) -> None:
     if args.source not in SOURCES:
         raise SystemExit(f"unknown source {args.source!r}, expected one of {sorted(SOURCES)}")
@@ -53,17 +83,52 @@ def cmd_scrape(args: argparse.Namespace) -> None:
     with source_cls() as source:
         raw_listings = source.fetch_listings(model=args.model, country=args.country, max_pages=args.max_pages)
 
-    # TODO(F1): replace with fx/ecb.py rates loaded from the fx_rates table
-    # once that's wired up; a manual override is enough to prove the pipeline.
-    rates_to_eur = {"EUR": 1.0}
-    if args.huf_rate is not None:
-        rates_to_eur["HUF"] = args.huf_rate
+    rates_to_eur = _rates_for_country(args.country, huf_rate_override=args.huf_rate)
 
     now = utc_now()
     with session_scope() as session:
         for raw in raw_listings:
             _upsert(session, raw, rates_to_eur=rates_to_eur, observed_at=now)
     print(f"stored {len(raw_listings)} listings from {args.source}/{args.model}/{args.country}")
+
+
+def cmd_scrape_all(args: argparse.Namespace) -> None:
+    """Scrape every source/model/country combo this project tracks, once.
+
+    The daily-cron entry point (see .github/workflows/). Best-effort per
+    combo — one source failing (a site's markup changed, a temporary block)
+    doesn't stop the others from running or being stored — but every
+    failure is still surfaced (non-zero exit at the end) so it doesn't
+    decay silently into "the dashboard just quietly has less data."
+    """
+    rate_date, ecb_rates = fetch_latest_rates()
+    rates_to_eur = {EUR: 1.0, **ecb_rates}
+    print(f"fx rates as of {rate_date} (HUF={rates_to_eur.get('HUF')})")
+
+    now = utc_now()
+    total_stored = 0
+    failures: list[str] = []
+
+    for source_name, target in SCRAPE_TARGETS.items():
+        source_cls = SOURCES[source_name]
+        for model in target["models"]:
+            for country in target["countries"]:
+                label = f"{source_name}/{model}/{country}"
+                try:
+                    with source_cls() as source:
+                        raw_listings = source.fetch_listings(model=model, country=country, max_pages=args.max_pages)
+                    with session_scope() as session:
+                        for raw in raw_listings:
+                            _upsert(session, raw, rates_to_eur=rates_to_eur, observed_at=now)
+                    print(f"ok    {label}: {len(raw_listings)} listings")
+                    total_stored += len(raw_listings)
+                except Exception as exc:  # noqa: BLE001 - one combo's failure must not abort the rest
+                    print(f"FAILED {label}: {exc}")
+                    failures.append(label)
+
+    print(f"scrape-all done: {total_stored} listings stored across {len(SCRAPE_TARGETS)} sources, {len(failures)} combo(s) failed")
+    if failures:
+        raise SystemExit(f"failed combos: {', '.join(failures)}")
 
 
 def cmd_export(args: argparse.Namespace) -> None:
@@ -197,9 +262,19 @@ def build_parser() -> argparse.ArgumentParser:
     # autoscout24 also does NL/BE/IT/ES/FR/LU, tesla doesn't); each source
     # validates its own country and raises a clear error.
     p_scrape.add_argument("--country", required=True)
-    p_scrape.add_argument("--huf-rate", type=float, default=None, help="manual HUF->EUR override until fx/ecb.py is wired up")
+    p_scrape.add_argument(
+        "--huf-rate", type=float, default=None, help="override the live ECB HUF rate (e.g. for offline testing)"
+    )
     p_scrape.add_argument("--max-pages", type=int, default=None, help="cap result pages fetched (default: no cap)")
     p_scrape.set_defaults(func=cmd_scrape)
+
+    p_scrape_all = subparsers.add_parser(
+        "scrape-all", help="scrape every source/model/country combo this project tracks (the daily-cron entry point)"
+    )
+    p_scrape_all.add_argument(
+        "--max-pages", type=int, default=None, help="cap result pages fetched per combo (default: no cap)"
+    )
+    p_scrape_all.set_defaults(func=cmd_scrape_all)
 
     p_export = subparsers.add_parser("export", help="dump active listings to a static JSON file for the frontend")
     p_export.add_argument("--out", required=True, help="output path, e.g. frontend/public/data/listings.json")

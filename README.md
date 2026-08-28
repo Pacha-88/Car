@@ -28,7 +28,10 @@ module, and an interactive dashboard.
   analysis layer, computed client-side so filtering recomputes instantly —
   Supabase (Phase 5) has no compute layer of its own, so this stays
   client-side even after the backend moves off flat files.
-- **Scheduling** (not started yet): GitHub Actions cron, daily.
+- **Scheduling**: GitHub Actions cron, daily
+  (`.github/workflows/scrape-and-deploy.yml`) — runs `scrape-all`, exports,
+  builds the frontend, deploys to GitHub Pages. Needs a few one-time manual
+  setup steps before it's actually live; see `docs/DEPLOYMENT.md`.
 
 ## Status
 
@@ -156,8 +159,31 @@ Every listing in the current demo export shows a "NEW" badge — expected,
 not a bug: all of it came from a single scrape batch with no prior scrape
 to diff against, and "new" is defined relative to the previous scrape date.
 
-Not started: deployment (Phase 5) — Supabase, GitHub Actions daily
-scheduling, going live.
+**Phase 5 (deployment): code-ready, three manual one-time steps left —
+see `docs/DEPLOYMENT.md`.** `db/session.py` already accepted a
+`DATABASE_URL` override from Phase 1 (`postgresql+psycopg://...`); this
+phase added the driver (`psycopg[binary]`), a `car-tracker scrape-all`
+command that runs every source/model/country combo the project tracks in
+one go (best-effort per combo — one source failing doesn't stop the
+others, but every failure is still surfaced, non-zero exit at the end),
+wired live ECB rates into both `scrape` and `scrape-all` (no more manual
+`--huf-rate` in production), and `.github/workflows/scrape-and-deploy.yml`
+— daily cron: scrape, export, build the frontend, deploy to GitHub Pages.
+
+Verified for real, not assumed: the full pipeline end-to-end against an
+actual local PostgreSQL 16 instance (schema, upsert-then-new-snapshot
+behavior, the works — see `docs/DEPLOYMENT.md`), `scrape-all` against
+every real combo (AutoScout24 + Kleinanzeigen succeeded; Tesla and
+Használtautó.hu 403'd, which is why the workflow tolerates partial
+failure rather than aborting the whole day's deploy over it), the ECB
+feed live for the first time this phase, and the production frontend
+build served from a simulated GitHub Pages subpath.
+
+What's left is three steps only the project owner can do (an external
+Supabase signup, a repo secret, a repo settings toggle) plus merging this
+branch to the repo's default branch, since GitHub only fires `schedule:`
+triggers from workflow files that live there — all spelled out in
+`docs/DEPLOYMENT.md`.
 
 ## Running it
 
@@ -169,8 +195,14 @@ uv run car-tracker scrape --source tesla --model model_y --country DE --huf-rate
 uv run car-tracker scrape --source autoscout24 --model model_y --country AT --max-pages 2  # works today
 uv run car-tracker scrape --source kleinanzeigen --model model_y --country DE --max-pages 1  # works, but go easy on it (see README)
 uv run car-tracker scrape --source hasznaltauto --model model_y --country HU --max-pages 1  # needs network (blocked from this sandbox)
+uv run car-tracker scrape-all --max-pages 1   # every source/model/country combo in one go — what the daily workflow runs
 uv run car-tracker export --out frontend/public/data/listings.json         # dumps active listings for the dashboard
 ```
+
+Point `DATABASE_URL` (env var) at a `postgresql+psycopg://...` connection
+string to run any of the above against Postgres instead of the local SQLite
+default — no code changes needed, `init-db`/`scrape`/`export` all read it
+the same way.
 
 Then, in `frontend/`:
 

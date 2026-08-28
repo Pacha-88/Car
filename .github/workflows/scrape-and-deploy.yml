@@ -1,0 +1,97 @@
+name: Scrape and deploy dashboard
+
+# Daily pipeline: scrape every tracked source into Supabase Postgres,
+# export the active listings to the frontend's static data file, build the
+# dashboard, and publish it to GitHub Pages. See README.md "Phase 5" and
+# frontend/README.md for the one-time setup this workflow depends on
+# (DATABASE_URL secret, Pages enabled with source "GitHub Actions").
+
+on:
+  schedule:
+    - cron: "0 5 * * *" # ~06:00-07:00 CET/CEST, before the day starts
+  workflow_dispatch: {} # manual "Run workflow" button, for testing/backfill
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deployment at a time; never cancel one mid-scrape (that
+# would leave the DB half-updated for the day).
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  scrape-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          uv python install 3.12
+          uv sync --locked
+
+      - name: Ensure DB schema exists
+        run: uv run car-tracker init-db
+
+      # Tolerant on purpose: Tesla and Használtautó.hu block requests from
+      # some networks at the site level (Akamai / Cloudflare bot defenses -
+      # see README), so `scrape-all` exiting non-zero because one or two of
+      # the four sources are blocked today is expected, not exceptional.
+      # Losing the whole day's dashboard refresh to that would be worse
+      # than the missing source itself, so this doesn't stop the workflow -
+      # only a *complete* failure below does.
+      - name: Scrape every tracked source
+        id: scrape
+        continue-on-error: true
+        run: uv run car-tracker scrape-all
+
+      - name: Flag any failed source (informational - does not block deploy)
+        if: steps.scrape.outcome == 'failure'
+        run: echo "::warning::scrape-all reported at least one failing source/model/country combo - see the 'Scrape every tracked source' step's log above for which. Deploying anyway with whatever data succeeded."
+
+      - name: Export listings for the dashboard
+        run: uv run car-tracker export --out frontend/public/data/listings.json
+
+      - name: Stop if nothing at all got exported
+        run: |
+          count=$(uv run python -c "import json; print(len(json.load(open('frontend/public/data/listings.json'))['listings']))")
+          echo "exported $count active listings"
+          if [ "$count" -eq 0 ]; then
+            echo "::error::zero active listings exported - this is more than one blocked source, something is fundamentally broken (DATABASE_URL secret? every source down at once? empty DB?)"
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: frontend/dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
