@@ -208,11 +208,16 @@ def _retire_unseen(
     dashboard on a single bad day, and (since retirement is what stops a
     listing being exported) hide it until the site came back.
     """
+    retirable = [name for name in sources if name not in skip_sources]
+    if not retirable:
+        # Every source failed, so there is nothing to retire. Return before
+        # opening a connection: a run where every site was blocked should
+        # not also need a working database to finish reporting that.
+        return {}
+
     retired: dict[str, int] = {}
     with session_scope() as session:
-        for source_name in sources:
-            if source_name in skip_sources:
-                continue
+        for source_name in retirable:
             result = session.execute(
                 update(Listing)
                 .where(

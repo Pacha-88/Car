@@ -20,6 +20,27 @@ from car_tracker.db.models import Base
 DEFAULT_SQLITE_PATH = "car_tracker.db"
 
 
+def normalize_database_url(url: str) -> str:
+    """Accept a Postgres connection string exactly as a provider hands it over.
+
+    Supabase (and every other hosted Postgres) gives you a URL starting
+    `postgresql://`. SQLAlchemy maps that bare scheme to the **psycopg2**
+    dialect — a driver this project deliberately doesn't install, since it
+    uses psycopg 3 — so the first query dies with
+    `ModuleNotFoundError: No module named 'psycopg2'`, long after the run
+    looked like it was working.
+
+    Requiring people to hand-edit the scheme is a step that will be
+    forgotten (it was, on the first real run of scripts/scrape-local.*),
+    and the failure it produces names a package nobody asked for. Rewrite
+    it here instead, once, for every entry point.
+    """
+    for prefix in ("postgresql://", "postgres://"):  # postgres:// is the older Heroku-style alias
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url[len(prefix) :]
+    return url
+
+
 def connect_args_for(url: str) -> dict[str, object]:
     """Driver-specific connection settings for a database URL.
 
@@ -45,7 +66,8 @@ def connect_args_for(url: str) -> dict[str, object]:
 
 
 def get_engine(database_url: str | None = None):
-    url = database_url or os.environ.get("DATABASE_URL") or f"sqlite:///{DEFAULT_SQLITE_PATH}"
+    raw = database_url or os.environ.get("DATABASE_URL") or f"sqlite:///{DEFAULT_SQLITE_PATH}"
+    url = normalize_database_url(raw)
     return create_engine(url, connect_args=connect_args_for(url))
 
 

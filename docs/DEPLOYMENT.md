@@ -79,11 +79,23 @@ listings just by not having looked at them.
 Download ONE file from `scripts/` in this repo, put it anywhere (e.g. the
 Desktop), and run it — no git clone, no manual installs:
 
-- **Windows**: [`scripts/scrape-local.bat`](../scripts/scrape-local.bat)
-  → download ("Raw" view → right-click → Save as), then double-click.
-- **macOS**: [`scripts/scrape-local.command`](../scripts/scrape-local.command)
-  → download, double-click (first time: right-click → Open, to get past
-  Gatekeeper). **Linux**: same file, `bash scrape-local.command`.
+- **macOS** — paste this once into Terminal (⌘+Space → "Terminal"). It
+  downloads the script to your Desktop, clears the two things macOS does
+  to downloaded files, and runs it:
+  ```bash
+  curl -fsSL -o ~/Desktop/scrape-local.command https://raw.githubusercontent.com/Pacha-88/Car/claude/auto-portal-planning-szpk2m/scripts/scrape-local.command && chmod +x ~/Desktop/scrape-local.command && xattr -d com.apple.quarantine ~/Desktop/scrape-local.command 2>/dev/null; ~/Desktop/scrape-local.command
+  ```
+  From then on it's a double-click on the Desktop icon. (Downloading it
+  through the browser instead gives "Permission denied" on the first
+  double-click — the file arrives without the execute bit and quarantined.
+  The script repairs both for subsequent runs, but it has to run once
+  first, which is what the command above does.)
+
+- **Windows** — [`scripts/scrape-local.bat`](../scripts/scrape-local.bat)
+  → open the "Raw" view, right-click → Save as, then double-click it.
+
+- **Linux** — same file as macOS:
+  `bash scrape-local.command`
 
 What it does, in order — and everything except the scrape itself happens
 only on the first run:

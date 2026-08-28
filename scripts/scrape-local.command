@@ -15,8 +15,18 @@
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SELF="$SCRIPT_DIR/$(basename "$0")"
 CONFIG="$SCRIPT_DIR/car-tracker-database-url.txt"
 REPO="git+https://github.com/Pacha-88/Car"
+
+# --- make future double-clicks work ---
+# A file downloaded from a browser arrives without the execute bit and, on
+# macOS, carrying com.apple.quarantine - so the first double-click fails
+# with "Permission denied" before a single line of this script runs. It
+# cannot fix that for its own first run (see the one-paste command in
+# docs/DEPLOYMENT.md), but it can make every run after this one work.
+chmod +x "$SELF" 2>/dev/null || true
+xattr -d com.apple.quarantine "$SELF" 2>/dev/null || true
 
 # --- uv telepítése, ha még nincs ---
 if ! command -v uv >/dev/null 2>&1; then
