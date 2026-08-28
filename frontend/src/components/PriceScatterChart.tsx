@@ -11,8 +11,10 @@ import {
 } from "recharts";
 import { binnedMedianTrend } from "../lib/trend";
 import { yearColor, yearLegendEntries } from "../lib/colors";
+import type { DealInfo } from "../lib/dealScore";
 import { formatEur, formatKm, formatYearMonth } from "../lib/format";
 import { CHASSIS_LABELS, SOURCE_LABELS, VARIANT_LABELS, type Listing } from "../types";
+import { DealBadge } from "./DealBadge";
 
 interface ScatterPoint {
   mileageKm: number;
@@ -27,12 +29,19 @@ interface PriceScatterChartProps {
   showTrendLine: boolean;
   watchlist: Set<string>;
   onToggleWatchlist: (id: string) => void;
+  dealScores: Map<string, DealInfo>;
 }
 
 const HIT_RADIUS = 12; // >= 24px hit target per the dataviz skill's interaction guidance
 const DOT_RADIUS = 4;
 
-export function PriceScatterChart({ listings, showTrendLine, watchlist, onToggleWatchlist }: PriceScatterChartProps) {
+export function PriceScatterChart({
+  listings,
+  showTrendLine,
+  watchlist,
+  onToggleWatchlist,
+  dealScores,
+}: PriceScatterChartProps) {
   const points = useMemo<ScatterPoint[]>(() => {
     const withYear = listings
       .filter((l) => l.mileageKm !== null)
@@ -96,7 +105,7 @@ export function PriceScatterChart({ listings, showTrendLine, watchlist, onToggle
           />
           <Tooltip
             cursor={{ stroke: "var(--baseline)", strokeDasharray: "3 3" }}
-            content={<HoverCard onToggleWatchlist={onToggleWatchlist} watchlist={watchlist} />}
+            content={<HoverCard onToggleWatchlist={onToggleWatchlist} watchlist={watchlist} dealScores={dealScores} />}
             trigger="hover"
           />
           {showTrendLine && (
@@ -179,9 +188,10 @@ interface HoverCardProps {
   payload?: { payload: Partial<ScatterPoint> }[];
   watchlist: Set<string>;
   onToggleWatchlist: (id: string) => void;
+  dealScores: Map<string, DealInfo>;
 }
 
-function HoverCard({ active, payload, watchlist, onToggleWatchlist }: HoverCardProps) {
+function HoverCard({ active, payload, watchlist, onToggleWatchlist, dealScores }: HoverCardProps) {
   if (!active || !payload || payload.length === 0) return null;
   // This chart draws two series, and Recharts hands the tooltip whichever one
   // is under the cursor. Only the scatter carries a listing; hovering the
@@ -190,6 +200,7 @@ function HoverCard({ active, payload, watchlist, onToggleWatchlist }: HoverCardP
   const listing = payload.find((entry) => entry?.payload?.listing)?.payload.listing;
   if (!listing) return null;
   const isWatchlisted = watchlist.has(listing.id);
+  const deal = dealScores.get(listing.id);
 
   return (
     <div className="w-64 overflow-hidden rounded-lg border border-border bg-surface-1 shadow-xl">
@@ -250,6 +261,13 @@ function HoverCard({ active, payload, watchlist, onToggleWatchlist }: HoverCardP
           <span>{listing.country}</span>
           {listing.powerKw && <span>· {listing.powerKw} kW</span>}
         </div>
+
+        {deal && (
+          <div className="mb-2 flex items-center gap-2">
+            <DealBadge deal={deal} mode="pill" />
+            <DealBadge deal={deal} mode="inline" />
+          </div>
+        )}
 
         <div className="mb-2 text-[11px] text-secondary">
           {listing.daysAtCurrentPrice === 0

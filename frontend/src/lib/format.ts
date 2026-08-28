@@ -28,3 +28,11 @@ export function formatYearMonth(iso: string | null): string | null {
   const d = new Date(iso);
   return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
+
+/** A signed percentage from a ratio: 0.12 → "+12%", -0.083 → "−8%". */
+export function formatPctSigned(ratio: number): string {
+  const pct = Math.round(ratio * 100);
+  if (pct > 0) return `+${pct}%`;
+  if (pct < 0) return `−${Math.abs(pct)}%`; // U+2212 minus, matches formatEurSigned's typography
+  return "0%";
+}

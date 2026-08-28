@@ -1,21 +1,27 @@
 import { useMemo, useState } from "react";
+import type { DealInfo } from "../lib/dealScore";
 import { formatEur, formatKm, formatYearMonth } from "../lib/format";
 import { SOURCE_COLOR_VAR, SOURCE_LABELS, VARIANT_LABELS, type Listing } from "../types";
+import { DealBadge } from "./DealBadge";
 
 interface ListingGridProps {
   listings: Listing[];
   watchlist: Set<string>;
   onToggleWatchlist: (id: string) => void;
+  dealScores: Map<string, DealInfo>;
 }
 
-type SortKey = "newest" | "price_asc" | "price_desc" | "mileage_asc";
+type SortKey = "newest" | "best_deal" | "price_asc" | "price_desc" | "mileage_asc";
 const PAGE_SIZES = [25, 50, 100];
 
 const COUNTRY_FLAGS: Record<string, string> = { DE: "🇩🇪", AT: "🇦🇹", HU: "🇭🇺", NL: "🇳🇱", BE: "🇧🇪", IT: "🇮🇹", ES: "🇪🇸", FR: "🇫🇷", LU: "🇱🇺" };
 
-function sortListings(listings: Listing[], key: SortKey): Listing[] {
+function sortListings(listings: Listing[], key: SortKey, dealScores: Map<string, DealInfo>): Listing[] {
   const copy = [...listings];
   switch (key) {
+    case "best_deal":
+      // Most below market first; unscored cars sort last, keeping newest order.
+      return copy.sort((a, b) => (dealScores.get(a.id)?.pct ?? Infinity) - (dealScores.get(b.id)?.pct ?? Infinity));
     case "price_asc":
       return copy.sort((a, b) => a.priceEur - b.priceEur);
     case "price_desc":
@@ -27,13 +33,13 @@ function sortListings(listings: Listing[], key: SortKey): Listing[] {
   }
 }
 
-export function ListingGrid({ listings, watchlist, onToggleWatchlist }: ListingGridProps) {
+export function ListingGrid({ listings, watchlist, onToggleWatchlist, dealScores }: ListingGridProps) {
   const [view, setView] = useState<"grid" | "list">("grid");
   const [sort, setSort] = useState<SortKey>("newest");
   const [perPage, setPerPage] = useState(50);
   const [page, setPage] = useState(0);
 
-  const sorted = useMemo(() => sortListings(listings, sort), [listings, sort]);
+  const sorted = useMemo(() => sortListings(listings, sort, dealScores), [listings, sort, dealScores]);
   const totalPages = Math.max(1, Math.ceil(sorted.length / perPage));
   const clampedPage = Math.min(page, totalPages - 1);
   const pageItems = sorted.slice(clampedPage * perPage, clampedPage * perPage + perPage);
@@ -68,6 +74,7 @@ export function ListingGrid({ listings, watchlist, onToggleWatchlist }: ListingG
               className="rounded-md border border-border bg-surface-1 px-1.5 py-1 text-primary"
             >
               <option value="newest">Newest listings first</option>
+              <option value="best_deal">Best deals first</option>
               <option value="price_asc">Price: low to high</option>
               <option value="price_desc">Price: high to low</option>
               <option value="mileage_asc">Mileage: low to high</option>
@@ -100,13 +107,25 @@ export function ListingGrid({ listings, watchlist, onToggleWatchlist }: ListingG
       ) : view === "grid" ? (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {pageItems.map((l) => (
-            <ListingCard key={l.id} listing={l} watchlisted={watchlist.has(l.id)} onToggleWatchlist={onToggleWatchlist} />
+            <ListingCard
+              key={l.id}
+              listing={l}
+              watchlisted={watchlist.has(l.id)}
+              onToggleWatchlist={onToggleWatchlist}
+              deal={dealScores.get(l.id)}
+            />
           ))}
         </div>
       ) : (
         <div className="flex flex-col gap-1.5">
           {pageItems.map((l) => (
-            <ListingRow key={l.id} listing={l} watchlisted={watchlist.has(l.id)} onToggleWatchlist={onToggleWatchlist} />
+            <ListingRow
+              key={l.id}
+              listing={l}
+              watchlisted={watchlist.has(l.id)}
+              onToggleWatchlist={onToggleWatchlist}
+              deal={dealScores.get(l.id)}
+            />
           ))}
         </div>
       )}
@@ -150,10 +169,12 @@ function ListingCard({
   listing,
   watchlisted,
   onToggleWatchlist,
+  deal,
 }: {
   listing: Listing;
   watchlisted: boolean;
   onToggleWatchlist: (id: string) => void;
+  deal: DealInfo | undefined;
 }) {
   return (
     <a
@@ -185,6 +206,9 @@ function ListingCard({
             NEW
           </span>
         )}
+        <span className="absolute bottom-1.5 left-1.5">
+          <DealBadge deal={deal} mode="pill" />
+        </span>
         <button
           type="button"
           onClick={(e) => {
@@ -203,6 +227,9 @@ function ListingCard({
           <span className="text-sm font-semibold text-primary">{formatEur(listing.priceEur)}</span>
           <span className="text-[10px] text-muted">{listing.mileageKm !== null ? formatKm(listing.mileageKm) : "—"}</span>
         </div>
+        <div className="flex justify-end">
+          <DealBadge deal={deal} mode="inline" />
+        </div>
       </div>
     </a>
   );
@@ -212,10 +239,12 @@ function ListingRow({
   listing,
   watchlisted,
   onToggleWatchlist,
+  deal,
 }: {
   listing: Listing;
   watchlisted: boolean;
   onToggleWatchlist: (id: string) => void;
+  deal: DealInfo | undefined;
 }) {
   return (
     <a
@@ -244,12 +273,16 @@ function ListingRow({
           {subtitle(listing)}
         </p>
       </div>
+      <span className="shrink-0">
+        <DealBadge deal={deal} mode="pill" />
+      </span>
       {listing.isNew && (
         <span className="shrink-0 rounded bg-status-warning px-1.5 py-0.5 text-[10px] font-semibold text-black">NEW</span>
       )}
       <div className="shrink-0 text-right tabular">
         <div className="text-sm font-semibold text-primary">{formatEur(listing.priceEur)}</div>
         <div className="text-[10px] text-muted">{listing.mileageKm !== null ? formatKm(listing.mileageKm) : "—"}</div>
+        <DealBadge deal={deal} mode="inline" />
       </div>
       <button
         type="button"

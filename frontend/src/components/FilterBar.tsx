@@ -34,10 +34,11 @@ interface FilterBarProps {
   modelListings: Listing[]; // all listings for the active model, unfiltered - for bounds/option discovery
   newCount: number;
   watchlistCount: number;
+  dealCount: number;
   onReset: () => void;
 }
 
-export function FilterBar({ filters, onChange, modelListings, newCount, watchlistCount, onReset }: FilterBarProps) {
+export function FilterBar({ filters, onChange, modelListings, newCount, watchlistCount, dealCount, onReset }: FilterBarProps) {
   const bounds = dataBounds(modelListings);
   const sourcesPresent = [...new Set(modelListings.map((l) => l.source))];
   const colorsPresent = [...new Set(modelListings.map((l) => l.color ?? "unknown"))];
@@ -166,6 +167,13 @@ export function FilterBar({ filters, onChange, modelListings, newCount, watchlis
             dot="var(--series-1)"
             active={filters.watchlistOnly}
             onClick={() => set("watchlistOnly", !filters.watchlistOnly)}
+          />
+          <Chip
+            label="Deals"
+            count={dealCount}
+            dot="var(--status-good)"
+            active={filters.dealsOnly}
+            onClick={() => set("dealsOnly", !filters.dealsOnly)}
           />
         </FilterGroup>
 

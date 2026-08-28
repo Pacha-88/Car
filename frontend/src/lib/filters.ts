@@ -20,6 +20,7 @@ export interface FilterState {
   mileageRange: [number, number];
   highlightNew: boolean;
   watchlistOnly: boolean;
+  dealsOnly: boolean; // keep only cars priced below market for their variant/mileage/age
   showTrendLine: boolean;
   showExcluded: boolean;
 }
@@ -63,6 +64,7 @@ export function defaultFilterState(listings: Listing[], model: Model): FilterSta
     ...bounds,
     highlightNew: false,
     watchlistOnly: false,
+    dealsOnly: false,
     showTrendLine: true,
     showExcluded: false,
   };

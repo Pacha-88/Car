@@ -7,10 +7,13 @@ import { PriceScatterChart } from "./components/PriceScatterChart";
 import { StatTiles } from "./components/StatTiles";
 import { useListings } from "./hooks/useListings";
 import { useWatchlist } from "./hooks/useWatchlist";
+import { computeDealScores } from "./lib/dealScore";
 import { ageBucketIndex, ageInYears, computeDepreciationCurve } from "./lib/depreciation";
 import { applyFilters, defaultFilterState, type FilterState } from "./lib/filters";
 import { linearSlope } from "./lib/trend";
 import type { Model } from "./types";
+
+const DEAL_TIERS_KEPT = new Set(["great", "good"]);
 
 const MIN_BUCKET_SIZE = 10;
 const REFERENCE_KM_FOR_EXCLUSION = 60_000;
@@ -41,6 +44,10 @@ export default function App() {
   const [filters, setFilters] = useState<FilterState | null>(null);
 
   const modelListings = useMemo(() => listings.filter((l) => l.model === model), [listings, model]);
+
+  // Deal scores are fit over the whole model's listings, not the filtered
+  // subset, so a car's "% vs market" stays put as you move the filters.
+  const dealScores = useMemo(() => computeDealScores(modelListings), [modelListings]);
 
   // (Re)seed filter bounds whenever the model switches or data first loads.
   useEffect(() => {
@@ -83,10 +90,25 @@ export default function App() {
     });
   }, [preExclusion, filters, thinBucketIndices]);
 
-  const highlighted = useMemo(() => (filters?.highlightNew ? displayed.filter((l) => l.isNew) : displayed), [
-    displayed,
-    filters,
-  ]);
+  // "Deals only" narrows the buyer-facing views (grid + scatter) to cars
+  // priced below market; the depreciation module stays on the full set.
+  const gridListings = useMemo(() => {
+    if (!filters?.dealsOnly) return displayed;
+    return displayed.filter((l) => {
+      const tier = dealScores.get(l.id)?.tier;
+      return tier !== undefined && DEAL_TIERS_KEPT.has(tier);
+    });
+  }, [displayed, filters, dealScores]);
+
+  const highlighted = useMemo(
+    () => (filters?.highlightNew ? gridListings.filter((l) => l.isNew) : gridListings),
+    [gridListings, filters],
+  );
+
+  const dealCount = useMemo(
+    () => displayed.filter((l) => DEAL_TIERS_KEPT.has(dealScores.get(l.id)?.tier ?? "")).length,
+    [displayed, dealScores],
+  );
 
   const eurPer10kKm = useMemo(() => {
     const points = displayed
@@ -154,6 +176,7 @@ export default function App() {
           modelListings={modelListings}
           newCount={newCount}
           watchlistCount={watchlist.size}
+          dealCount={dealCount}
           onReset={() => setFilters(defaultFilterState(listings, model))}
         />
       </div>
@@ -165,6 +188,7 @@ export default function App() {
             showTrendLine={filters.showTrendLine}
             watchlist={watchlist}
             onToggleWatchlist={toggleWatchlist}
+            dealScores={dealScores}
           />
         </ErrorBoundary>
       </div>
@@ -176,7 +200,12 @@ export default function App() {
       </div>
 
       <ErrorBoundary label="The listing grid">
-        <ListingGrid listings={displayed} watchlist={watchlist} onToggleWatchlist={toggleWatchlist} />
+        <ListingGrid
+          listings={gridListings}
+          watchlist={watchlist}
+          onToggleWatchlist={toggleWatchlist}
+          dealScores={dealScores}
+        />
       </ErrorBoundary>
     </div>
   );
