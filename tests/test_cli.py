@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import date
+from datetime import date, datetime
 
 import pytest
 from sqlalchemy import select
@@ -121,6 +121,105 @@ def test_rates_for_country_fetches_ecb_for_non_eurozone_country(monkeypatch):
     monkeypatch.setattr(cli, "fetch_latest_rates", lambda: (date(2026, 8, 28), {"HUF": 0.0027, "USD": 0.86}))
     rates = cli._rates_for_country("HU", huf_rate_override=None)
     assert rates == {"EUR": 1.0, "HUF": 0.0027, "USD": 0.86}
+
+
+class _FakeEmptySource(Source):
+    """A source that returns nothing - what a silently-blocked site looks like."""
+
+    name = "fake_ok"
+
+    def __enter__(self) -> "_FakeEmptySource":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        return None
+
+    def fetch_listings(self, *, model: str, country: str, max_pages: int | None = None) -> list[RawListing]:
+        return []
+
+
+def _seed_one_listing(db_url: str, *, source: str, seen_at) -> None:
+    with session_scope(get_engine(db_url)) as session:
+        session.add(
+            Listing(
+                id=f"{source}:old",
+                source=source,
+                source_listing_id="old",
+                model="model_y",
+                country="DE",
+                url="https://example.com/old",
+                first_seen_at=seen_at,
+                last_seen_at=seen_at,
+                is_active=True,
+            )
+        )
+
+
+def _is_active(db_url: str, listing_id: str) -> bool:
+    with session_scope(get_engine(db_url)) as session:
+        return session.execute(select(Listing.is_active).where(Listing.id == listing_id)).scalar()
+
+
+def test_scrape_all_retires_listings_the_site_no_longer_lists(isolated_db, monkeypatch):
+    """Sold and withdrawn cars must stop being exported, or the dashboard
+    fills up with dead listings and the medians drift with them."""
+    _seed_one_listing(isolated_db, source="fake_ok", seen_at=datetime(2026, 1, 1))
+
+    monkeypatch.setattr(cli, "fetch_latest_rates", lambda: (date(2026, 8, 28), {"HUF": 0.0025}))
+    monkeypatch.setattr(cli, "SOURCES", {"fake_ok": _FakeOkSource})
+    monkeypatch.setattr(cli, "SCRAPE_TARGETS", {"fake_ok": {"models": ["model_y"], "countries": ["DE"]}})
+
+    cli.cmd_scrape_all(argparse.Namespace(max_pages=None))
+
+    assert _is_active(isolated_db, "fake_ok:old") is False, "stale listing should have been retired"
+    # ...while the listing this run actually saw stays active.
+    assert _is_active(isolated_db, "fake_ok:model_y-DE") is True
+
+
+def test_scrape_all_never_retires_anything_for_a_source_that_failed(isolated_db, monkeypatch):
+    """The dangerous case: a blocked source returns nothing, and "saw
+    nothing" must not be read as "everything is gone" - that would wipe a
+    whole marketplace off the dashboard on one bad day."""
+    _seed_one_listing(isolated_db, source="fake_fail", seen_at=datetime(2026, 1, 1))
+
+    monkeypatch.setattr(cli, "fetch_latest_rates", lambda: (date(2026, 8, 28), {"HUF": 0.0025}))
+    monkeypatch.setattr(cli, "SOURCES", {"fake_fail": _FakeFailSource})
+    monkeypatch.setattr(cli, "SCRAPE_TARGETS", {"fake_fail": {"models": ["model_y"], "countries": ["DE"]}})
+
+    with pytest.raises(SystemExit):
+        cli.cmd_scrape_all(argparse.Namespace(max_pages=None))
+
+    assert _is_active(isolated_db, "fake_fail:old") is True, "a failing source must never retire its own listings"
+
+
+def test_scrape_all_does_not_retire_when_a_source_legitimately_returns_nothing_but_succeeded(
+    isolated_db, monkeypatch
+):
+    """A source that succeeds but genuinely has zero results today *should*
+    retire - this pins the difference against the failure case above."""
+    _seed_one_listing(isolated_db, source="fake_ok", seen_at=datetime(2026, 1, 1))
+
+    monkeypatch.setattr(cli, "fetch_latest_rates", lambda: (date(2026, 8, 28), {"HUF": 0.0025}))
+    monkeypatch.setattr(cli, "SOURCES", {"fake_ok": _FakeEmptySource})
+    monkeypatch.setattr(cli, "SCRAPE_TARGETS", {"fake_ok": {"models": ["model_y"], "countries": ["DE"]}})
+
+    cli.cmd_scrape_all(argparse.Namespace(max_pages=None))
+
+    assert _is_active(isolated_db, "fake_ok:old") is False
+
+
+def test_retiring_one_source_leaves_other_sources_untouched(isolated_db, monkeypatch):
+    _seed_one_listing(isolated_db, source="fake_ok", seen_at=datetime(2026, 1, 1))
+    _seed_one_listing(isolated_db, source="other", seen_at=datetime(2026, 1, 1))
+
+    monkeypatch.setattr(cli, "fetch_latest_rates", lambda: (date(2026, 8, 28), {"HUF": 0.0025}))
+    monkeypatch.setattr(cli, "SOURCES", {"fake_ok": _FakeOkSource})
+    monkeypatch.setattr(cli, "SCRAPE_TARGETS", {"fake_ok": {"models": ["model_y"], "countries": ["DE"]}})
+
+    cli.cmd_scrape_all(argparse.Namespace(max_pages=None))
+
+    assert _is_active(isolated_db, "fake_ok:old") is False
+    assert _is_active(isolated_db, "other:old") is True, "a source not in this run must not be touched"
 
 
 def test_export_creates_missing_parent_directories(isolated_db, tmp_path):

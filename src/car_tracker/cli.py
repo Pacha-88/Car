@@ -8,7 +8,7 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from car_tracker.analysis.listing_status import days_at_current_price, is_new_since_last_scrape
 from car_tracker.db.models import Listing, ListingSnapshot
@@ -109,6 +109,7 @@ def cmd_scrape_all(args: argparse.Namespace) -> None:
     now = utc_now()
     total_stored = 0
     failures: list[str] = []
+    failed_sources: set[str] = set()
 
     for source_name, target in SCRAPE_TARGETS.items():
         source_cls = SOURCES[source_name]
@@ -126,10 +127,53 @@ def cmd_scrape_all(args: argparse.Namespace) -> None:
                 except Exception as exc:  # noqa: BLE001 - one combo's failure must not abort the rest
                     print(f"FAILED {label}: {exc}")
                     failures.append(label)
+                    failed_sources.add(source_name)
+
+    retired = _retire_unseen(now, skip_sources=failed_sources)
+    for source_name, count in sorted(retired.items()):
+        print(f"retired {source_name}: {count} listing(s) no longer on the site")
+    for source_name in sorted(failed_sources):
+        print(f"kept    {source_name}: not retiring anything, this source had failing combo(s) this run")
 
     print(f"scrape-all done: {total_stored} listings stored across {len(SCRAPE_TARGETS)} sources, {len(failures)} combo(s) failed")
     if failures:
         raise SystemExit(f"failed combos: {', '.join(failures)}")
+
+
+def _retire_unseen(run_started_at: datetime, *, skip_sources: set[str]) -> dict[str, int]:
+    """Mark listings a completed scrape no longer found as inactive.
+
+    Without this, sold and withdrawn cars accumulate forever: `_upsert`
+    only ever sets `is_active` True. Within weeks the dashboard would be
+    mostly dead listings, dragging the medians and the depreciation curve
+    with them.
+
+    A listing is retired when its `last_seen_at` predates this run — every
+    listing the run *did* see was just stamped with `run_started_at`.
+
+    Sources with any failing combo are skipped entirely. A blocked or
+    broken source returns nothing, and "saw nothing" must never be read as
+    "everything is gone" — that would wipe a whole marketplace from the
+    dashboard on a single bad day, and (since retirement is what stops a
+    listing being exported) hide it until the site came back.
+    """
+    retired: dict[str, int] = {}
+    with session_scope() as session:
+        for source_name in SCRAPE_TARGETS:
+            if source_name in skip_sources:
+                continue
+            result = session.execute(
+                update(Listing)
+                .where(
+                    Listing.source == source_name,
+                    Listing.is_active.is_(True),
+                    Listing.last_seen_at < run_started_at,
+                )
+                .values(is_active=False)
+            )
+            if result.rowcount:
+                retired[source_name] = result.rowcount
+    return retired
 
 
 def cmd_export(args: argparse.Namespace) -> None:
