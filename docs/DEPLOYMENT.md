@@ -74,36 +74,44 @@ It scrapes only those two sources and writes to the same database, so the
 two runs never disturb each other's data — neither retires the other's
 listings just by not having looked at them.
 
-### One-time setup on your machine
+### One-click setup (recommended)
 
-1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/).
-2. Clone the repo and `cd` into it.
-3. Put the same connection string the GitHub secret holds into a `.env`
-   file in the project root (it's gitignored):
-   ```
-   DATABASE_URL=postgresql+psycopg://postgres.xxxxx:your-password@aws-...pooler.supabase.com:6543/postgres
-   ```
-4. Run it once to check:
-   ```
-   uv run --env-file .env car-tracker scrape-local
-   ```
+Download ONE file from `scripts/` in this repo, put it anywhere (e.g. the
+Desktop), and run it — no git clone, no manual installs:
 
-Once it has run, the dashboard picks the data up on the next scheduled
-deploy (or trigger one manually from the Actions tab).
+- **Windows**: [`scripts/scrape-local.bat`](../scripts/scrape-local.bat)
+  → download ("Raw" view → right-click → Save as), then double-click.
+- **macOS**: [`scripts/scrape-local.command`](../scripts/scrape-local.command)
+  → download, double-click (first time: right-click → Open, to get past
+  Gatekeeper). **Linux**: same file, `bash scrape-local.command`.
 
-### Running it automatically
+What it does, in order — and everything except the scrape itself happens
+only on the first run:
+1. Installs `uv` if missing (the official installer, one-time).
+2. Asks for the `DATABASE_URL` (paste the same value the GitHub secret
+   holds) and saves it next to the script, so it never asks again.
+3. Runs the scrape **straight from this GitHub repo** (`uv tool run --from
+   git+.../Car`), always at the latest code — fixes and new sources arrive
+   with no action on your side.
+4. Offers to schedule itself daily at 07:00 (Task Scheduler on Windows,
+   cron on macOS/Linux). Answer `i` once and you're done forever.
 
-- **macOS / Linux** — `crontab -e`, then (07:00 daily, adjust the path):
-  ```
-  0 7 * * * cd /path/to/Car && /path/to/uv run --env-file .env car-tracker scrape-local >> scrape-local.log 2>&1
-  ```
-- **Windows** — Task Scheduler → Create Basic Task → Daily → Start a
-  program: `uv`, arguments `run --env-file .env car-tracker scrape-local`,
-  "Start in" set to the repo folder.
+The whole plumbing (uv check → saved config → run-from-GitHub → summary)
+was executed end-to-end from this project's sandbox; the sources
+themselves 403 from here, which is the very reason this script exists —
+from a home connection they serve normally.
 
 It only updates while your machine is on and online. Missing a day costs
 nothing: nothing is deleted, the listings simply keep their previous
 prices until the next successful run.
+
+### Manual setup (if you prefer a clone)
+
+1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/),
+   clone the repo, `cd` into it.
+2. Put the connection string into a gitignored `.env` file:
+   `DATABASE_URL=postgresql+psycopg://...`
+3. `uv run --env-file .env car-tracker scrape-local`
 
 ### If the block ever lifts
 
