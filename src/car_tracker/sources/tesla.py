@@ -78,9 +78,21 @@ def stock_photo(item: dict, *, model: str) -> list[str]:
     and hotlinkable; every community inventory tracker uses it. No codes,
     no render - an empty list keeps the placeholder.
     """
-    codes = item.get("OptionCodeList") or []
-    if isinstance(codes, str):
-        codes = codes.split(",")
+    # The pasted sample this module was built from did not include the
+    # option-code field, and tesla.com is unreachable from this sandbox to
+    # check the spelling - so accept every shape the API has been seen to
+    # use over the years rather than betting on one: a comma string, a
+    # plain list, or OptionCodeData's list of {"code": ...} dicts.
+    raw_codes = (
+        item.get("OptionCodeList")
+        or item.get("OptionCodeListDisplayOnly")
+        or item.get("OptionCodeData")
+        or []
+    )
+    if isinstance(raw_codes, str):
+        codes = raw_codes.split(",")
+    else:
+        codes = [c.get("code", "") if isinstance(c, dict) else str(c) for c in raw_codes]
     cleaned = [c.strip().lstrip("$") for c in codes if c and c.strip()]
     if not cleaned:
         return []
@@ -111,9 +123,14 @@ class TeslaSource(Source):
     def fetch_listings(self, *, model: str, country: str, max_pages: int | None = None) -> list[RawListing]:
         listings: list[RawListing] = []
         pages_done = 0
+        photoless_sample: dict | None = None
         try:
             for page_num, (offset, results, total) in enumerate(self._iter_pages(model, country), start=1):
-                listings.extend(parse_item(item, model=model, country=country) for item in results)
+                for item in results:
+                    raw = parse_item(item, model=model, country=country)
+                    if not raw.photo_urls and photoless_sample is None:
+                        photoless_sample = item
+                    listings.append(raw)
                 pages_done = page_num
                 if offset + PAGE_SIZE >= total or (max_pages is not None and page_num >= max_pages):
                     break
@@ -128,7 +145,28 @@ class TeslaSource(Source):
             raise PartialResults(
                 listings, f"page {pages_done + 1} failed ({type(exc).__name__}: {exc})"
             ) from exc
+        self._report_photoless(listings, photoless_sample, model=model, country=country)
         return listings
+
+    @staticmethod
+    def _report_photoless(listings: list[RawListing], sample: dict | None, *, model: str, country: str) -> None:
+        """Say which fields a photo-less car actually carries.
+
+        A card with no photo means the item had neither inspection photos
+        nor any option-code field this module recognises - and since the
+        real response shape cannot be inspected from the dev sandbox
+        (tesla.com refuses datacenter traffic), the person running
+        scrape-local at home is the only one who ever sees a real item.
+        One line in their log turns "still no photos" into the exact field
+        list needed to fix the mapping.
+        """
+        photoless = sum(1 for raw in listings if not raw.photo_urls)
+        if not photoless or sample is None:
+            return
+        print(
+            f"    tesla/{model}/{country}: {photoless} of {len(listings)} cars have no photos and no"
+            f" recognised option codes - fields on one such car: {sorted(sample.keys())}"
+        )
 
     def fetch_raw_page(self, *, model: str, country: str, offset: int = 0) -> dict:
         """One raw page, unparsed — for inspecting the real response shape.

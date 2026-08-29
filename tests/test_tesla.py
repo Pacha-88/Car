@@ -235,3 +235,32 @@ def test_a_car_with_no_photos_gets_a_configurator_render(codes):
 def test_no_photos_and_no_codes_keeps_the_placeholder():
     raw = parse_item(RWD_ITEM_MINIMAL, model="model_y", country="DE")
     assert raw.photo_urls == []
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        {"OptionCodeData": [{"code": "MTY13", "group": "TRIM"}, {"code": "PPSW", "group": "PAINT"}]},
+        {"OptionCodeListDisplayOnly": "MTY13,PPSW"},
+    ],
+)
+def test_alternative_option_code_fields_also_produce_a_render(field):
+    """The pasted sample lacked the code field and tesla.com is unreachable
+    from the sandbox, so every spelling the API has used is accepted."""
+    raw = parse_item({**RWD_ITEM_MINIMAL, **field}, model="model_y", country="DE")
+    assert len(raw.photo_urls) == 1
+    assert "$MTY13,$PPSW" in raw.photo_urls[0]
+
+
+def test_a_run_nameses_the_fields_of_a_photoless_car(capsys):
+    """The person running scrape-local at home is the only one who ever sees
+    a real item, so their log carries the diagnosis."""
+    TeslaSource._report_photoless(
+        [parse_item(RWD_ITEM_MINIMAL, model="model_y", country="DE")],
+        RWD_ITEM_MINIMAL,
+        model="model_y",
+        country="DE",
+    )
+    out = capsys.readouterr().out
+    assert "1 of 1 cars have no photos" in out
+    assert "'VIN'" in out
