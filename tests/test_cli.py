@@ -1235,3 +1235,40 @@ def test_one_unreadable_price_does_not_erase_a_car_from_the_export(isolated_db, 
     payload = json.loads(out.read_text())
     assert [l["id"] for l in payload["listings"]] == ["autoscout24:blip"]
     assert payload["listings"][0]["priceEur"] == 40_000.0
+
+
+def test_the_export_carries_witnessed_sale_times(isolated_db, tmp_path):
+    """Five cars arrived while we watched and sold; a sixth was on sale
+    since day one (censored) and a seventh is a retired referral link
+    (never a usable price, so never a sale)."""
+    day_one = datetime(2026, 8, 1)
+    with session_scope(get_engine(isolated_db)) as session:
+        def add(listing_id, *, first, last, active, price=30_000.0):
+            session.add(
+                Listing(
+                    id=listing_id, source="autoscout24", source_listing_id=listing_id,
+                    model="model_y", country="DE", url="https://example.com",
+                    title_raw="Long Range AWD", first_seen_at=first, last_seen_at=last,
+                    is_active=active,
+                )
+            )
+            session.add(
+                ListingSnapshot(
+                    listing_id=listing_id, observed_at=first, price_original=price,
+                    currency_original="EUR", price_eur=price, mileage_km=50_000,
+                )
+            )
+
+        add("anchor", first=day_one, last=datetime(2026, 8, 29), active=True)
+        for i, days in enumerate((5, 9, 12, 16, 30)):
+            add(f"sold{i}", first=datetime(2026, 8, 3), last=datetime(2026, 8, 3) + timedelta(days=days), active=False)
+        add("censored", first=day_one, last=datetime(2026, 8, 4), active=False)
+        add("junk", first=datetime(2026, 8, 3), last=datetime(2026, 8, 10), active=False, price=1.0)
+
+    out = tmp_path / "listings.json"
+    cli.cmd_export(argparse.Namespace(out=str(out)))
+    payload = json.loads(out.read_text())
+    assert payload["saleTimes"] == [
+        {"model": "model_y", "variant": None, "medianDays": 12.0, "n": 5},
+        {"model": "model_y", "variant": "long_range_awd", "medianDays": 12.0, "n": 5},
+    ]

@@ -344,6 +344,8 @@ function Dashboard({ data }: { data: ReturnType<typeof useListings> }) {
           watchlist={watchlist}
           onToggleWatchlist={toggleWatchlist}
           dealScores={dealScores}
+          latestScrapeDate={latestScrapeDate}
+          saleTimes={data.saleTimes}
         />
       </ErrorBoundary>
     </div>

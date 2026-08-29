@@ -48,7 +48,18 @@ export interface ExportPayload {
   hufPerEur: number | null;
   /** The market's own movement, one row per day per model, oldest first. */
   marketHistory?: MarketDay[] | null;
+  /** Median days a car sits before its ad disappears - only sales whose
+   * arrival was witnessed too, so the numbers start empty and every one
+   * has a true span. variant null = the whole model together. */
+  saleTimes?: SaleTime[] | null;
   listings: Listing[];
+}
+
+export interface SaleTime {
+  model: Model;
+  variant: string | null;
+  medianDays: number;
+  n: number;
 }
 
 export interface MarketDay {

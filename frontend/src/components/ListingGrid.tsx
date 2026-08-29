@@ -2,10 +2,12 @@ import { useMemo, useState } from "react";
 import type { DealInfo } from "../lib/dealScore";
 import { formatKm, formatYearMonth } from "../lib/format";
 import { useMoney } from "../lib/moneyContext";
-import { SOURCE_COLOR_VAR, SOURCE_LABELS, VARIANT_LABELS, listingTitle, type Listing } from "../types";
+import { SOURCE_COLOR_VAR, SOURCE_LABELS, VARIANT_LABELS, listingTitle, type Listing, type SaleTime } from "../types";
 import { DealBadge } from "./DealBadge";
 import { PriceDropBadge } from "./PriceDropBadge";
 import { priceChange } from "../lib/priceHistory";
+import { daysListed, isSlowSeller, saleTimeFor } from "../lib/marketTime";
+import { PriceSparkline } from "./PriceSparkline";
 import { ListingPhoto } from "./ListingPhoto";
 
 interface ListingGridProps {
@@ -13,9 +15,13 @@ interface ListingGridProps {
   watchlist: Set<string>;
   onToggleWatchlist: (id: string) => void;
   dealScores: Map<string, DealInfo>;
+  /** The data's own clock - market time is measured against the last
+   * scrape, never the reader's wall clock. */
+  latestScrapeDate: string | null;
+  saleTimes: SaleTime[];
 }
 
-type SortKey = "newest" | "best_deal" | "biggest_drop" | "price_asc" | "price_desc" | "mileage_asc";
+type SortKey = "newest" | "best_deal" | "biggest_drop" | "longest_listed" | "price_asc" | "price_desc" | "mileage_asc";
 const PAGE_SIZES = [25, 50, 100];
 
 const COUNTRY_FLAGS: Record<string, string> = { DE: "🇩🇪", AT: "🇦🇹", HU: "🇭🇺", NL: "🇳🇱", BE: "🇧🇪", IT: "🇮🇹", ES: "🇪🇸", FR: "🇫🇷", LU: "🇱🇺" };
@@ -36,6 +42,10 @@ function sortListings(listings: Listing[], key: SortKey, dealScores: Map<string,
       const pct = new Map(copy.map((l) => [l.id, priceChange(l)?.pct ?? 0]));
       return copy.sort((a, b) => (pct.get(a.id) ?? 0) - (pct.get(b.id) ?? 0));
     }
+    case "longest_listed":
+      // The sitters first: a seller a month into an unsold ad is the one
+      // an offer lands with.
+      return copy.sort((a, b) => new Date(a.firstSeenAt).getTime() - new Date(b.firstSeenAt).getTime());
     case "price_asc":
       return copy.sort((a, b) => a.priceEur - b.priceEur);
     case "price_desc":
@@ -47,7 +57,7 @@ function sortListings(listings: Listing[], key: SortKey, dealScores: Map<string,
   }
 }
 
-export function ListingGrid({ listings, watchlist, onToggleWatchlist, dealScores }: ListingGridProps) {
+export function ListingGrid({ listings, watchlist, onToggleWatchlist, dealScores, latestScrapeDate, saleTimes }: ListingGridProps) {
   const [view, setView] = useState<"grid" | "list">("grid");
   const [sort, setSort] = useState<SortKey>("newest");
   const [perPage, setPerPage] = useState(50);
@@ -100,6 +110,7 @@ export function ListingGrid({ listings, watchlist, onToggleWatchlist, dealScores
               <option value="newest">Newest listings first</option>
               <option value="best_deal">Best deals first</option>
               <option value="biggest_drop">Biggest price drop</option>
+              <option value="longest_listed">Longest on market</option>
               <option value="price_asc">Price: low to high</option>
               <option value="price_desc">Price: high to low</option>
               <option value="mileage_asc">Mileage: low to high</option>
@@ -138,6 +149,8 @@ export function ListingGrid({ listings, watchlist, onToggleWatchlist, dealScores
               watchlisted={watchlist.has(l.id)}
               onToggleWatchlist={onToggleWatchlist}
               deal={dealScores.get(l.id)}
+              latestScrapeDate={latestScrapeDate}
+              saleTimes={saleTimes}
             />
           ))}
         </div>
@@ -150,6 +163,8 @@ export function ListingGrid({ listings, watchlist, onToggleWatchlist, dealScores
               watchlisted={watchlist.has(l.id)}
               onToggleWatchlist={onToggleWatchlist}
               deal={dealScores.get(l.id)}
+              latestScrapeDate={latestScrapeDate}
+              saleTimes={saleTimes}
             />
           ))}
         </div>
@@ -190,18 +205,36 @@ function subtitle(listing: Listing): string {
   return parts.join(" · ") || "—";
 }
 
+function marketTimeTitle(listing: Listing, days: number, typical: SaleTime | null): string {
+  const first = listing.firstSeenAt.slice(0, 10);
+  let text = `Tracked ${days} day${days === 1 ? "" : "s"} (first seen ${first} - the ad itself may be older).`;
+  if (typical) {
+    text += ` Similar cars typically sell in ~${Math.round(typical.medianDays)} days (${typical.n} watched sale${
+      typical.n === 1 ? "" : "s"
+    }).`;
+  }
+  return text;
+}
+
 function ListingCard({
   listing,
   watchlisted,
   onToggleWatchlist,
   deal,
+  latestScrapeDate,
+  saleTimes,
 }: {
   listing: Listing;
   watchlisted: boolean;
   onToggleWatchlist: (id: string) => void;
   deal: DealInfo | undefined;
+  latestScrapeDate: string | null;
+  saleTimes: SaleTime[];
 }) {
   const money = useMoney();
+  const days = daysListed(listing, latestScrapeDate);
+  const typical = saleTimeFor(saleTimes, listing);
+  const slow = isSlowSeller(days, typical);
   return (
     <a
       href={listing.url}
@@ -248,8 +281,25 @@ function ListingCard({
         </p>
         <div className="numeral mt-auto flex items-baseline justify-between gap-2 pt-1.5">
           <span className="text-[15px] font-semibold leading-none text-primary">{money.formatListing(listing)}</span>
-          <span className="text-[10px] text-muted">{listing.mileageKm !== null ? formatKm(listing.mileageKm) : "—"}</span>
+          <span className="text-[10px] text-muted">
+            {listing.mileageKm !== null ? formatKm(listing.mileageKm) : "—"}
+            {/* Shown from two weeks: on a young ad "3 days" is noise, and
+                on the day the tracker launches every card would carry it. */}
+            {days !== null && days >= 14 && (
+              <span title={marketTimeTitle(listing, days, typical)} className={slow ? "font-semibold text-status-warning" : ""}>
+                {" "}
+                · {days} d
+              </span>
+            )}
+          </span>
         </div>
+        {/* Its own row: squeezed beside the two badges it overlapped the
+            deal text on narrow cards. Only repriced cars pay the height. */}
+        {(listing.priceHistory?.length ?? 0) >= 2 && (
+          <div className="flex justify-start pt-0.5">
+            <PriceSparkline listing={listing} latestScrapeDate={latestScrapeDate} />
+          </div>
+        )}
         <div className="flex items-center justify-between gap-1">
           <PriceDropBadge listing={listing} compact />
           <DealBadge deal={deal} mode="inline" />
@@ -264,13 +314,20 @@ function ListingRow({
   watchlisted,
   onToggleWatchlist,
   deal,
+  latestScrapeDate,
+  saleTimes,
 }: {
   listing: Listing;
   watchlisted: boolean;
   onToggleWatchlist: (id: string) => void;
   deal: DealInfo | undefined;
+  latestScrapeDate: string | null;
+  saleTimes: SaleTime[];
 }) {
   const money = useMoney();
+  const days = daysListed(listing, latestScrapeDate);
+  const typical = saleTimeFor(saleTimes, listing);
+  const slow = isSlowSeller(days, typical);
   return (
     <a
       href={listing.url}
@@ -287,8 +344,16 @@ function ListingRow({
           {SOURCE_LABELS[listing.source] ?? listing.source} · {COUNTRY_FLAGS[listing.country] ?? listing.country} ·{" "}
           {subtitle(listing)}
           {listing.hasFsd && <span className="ml-1 font-semibold text-secondary">· FSD</span>}
+          {days !== null && days > 0 && (
+            <span title={marketTimeTitle(listing, days, typical)} className={slow ? "ml-1 font-semibold text-status-warning" : "ml-1"}>
+              · {days} day{days === 1 ? "" : "s"}
+            </span>
+          )}
         </p>
       </div>
+      <span className="shrink-0">
+        <PriceSparkline listing={listing} latestScrapeDate={latestScrapeDate} />
+      </span>
       <span className="shrink-0">
         <PriceDropBadge listing={listing} />
       </span>

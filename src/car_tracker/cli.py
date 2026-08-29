@@ -18,6 +18,7 @@ from car_tracker.analysis.listing_status import (
     is_usable_price,
 )
 from car_tracker.analysis.price_history import market_history, price_points
+from car_tracker.analysis.sale_time import SaleRow, sale_times
 from car_tracker.db.models import FxRate, Listing, ListingSnapshot
 from car_tracker.db.session import init_db, session_scope
 from car_tracker.fx.ecb import fetch_latest_rates
@@ -534,16 +535,34 @@ def cmd_export(args: argparse.Namespace) -> None:
             snapshots_by_listing[snapshot.listing_id].append(snapshot)
             all_snapshots.append(snapshot)
 
-        # Every listing, retired ones included. The market index needs the
-        # cars that SOLD more than it needs the ones still on sale: drop
-        # them and it only ever tracks what nobody wanted.
-        model_of = {
-            listing_id: model
-            for listing_id, model in session.execute(select(Listing.id, Listing.model)).all()
-        }
+        # Every listing, retired ones included, loaded once: the market
+        # index needs the cars that SOLD more than the ones still on sale
+        # (drop them and it only ever tracks what nobody wanted), and the
+        # days-to-sale medians are made of nothing else.
+        all_listings = list(session.execute(select(Listing)).scalars())
+        model_of = {listing.id: listing.model for listing in all_listings}
+
+        # Only listings that ever recorded a usable price can be a sale -
+        # the retirement of a 1 EUR referral link is not a car selling.
+        usable_ids = {snap.listing_id for snap in all_snapshots if is_usable_price(snap)}
+        sale_stats = sale_times(
+            [
+                SaleRow(
+                    listing_id=listing.id,
+                    source=listing.source,
+                    model=listing.model,
+                    variant=best_variant(listing),
+                    first_seen=listing.first_seen_at.date(),
+                    last_seen=listing.last_seen_at.date(),
+                    is_active=bool(listing.is_active),
+                )
+                for listing in all_listings
+                if listing.id in usable_ids
+            ]
+        )
 
         listings_out = []
-        for listing in session.execute(select(Listing).where(Listing.is_active.is_(True))).scalars():
+        for listing in (l for l in all_listings if l.is_active):
             snapshots = snapshots_by_listing.get(listing.id)
             if not snapshots:
                 continue
@@ -646,6 +665,19 @@ def cmd_export(args: argparse.Namespace) -> None:
                 "matchedPairs": day.matched_pairs,
             }
             for day in market_days
+        ],
+        # Median days a car sits before its ad disappears, per variant and
+        # per model, counting only sales whose ARRIVAL was witnessed too -
+        # see analysis/sale_time.py for why the censored cohort stays out.
+        # Empty until enough watched cars have sold.
+        "saleTimes": [
+            {
+                "model": stat.model,
+                "variant": stat.variant,
+                "medianDays": stat.median_days,
+                "n": stat.n,
+            }
+            for stat in sale_stats
         ],
         "listings": listings_out,
     }

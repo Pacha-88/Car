@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { ExportPayload, Listing, MarketDay } from "../types";
+import type { ExportPayload, Listing, MarketDay, SaleTime } from "../types";
 
 interface ListingsState {
   listings: Listing[];
@@ -9,6 +9,9 @@ interface ListingsState {
   /** One row per day per model, oldest first. Empty until a run has
    * written one - an export from before this field existed has none. */
   marketHistory: MarketDay[];
+  /** Median witnessed days-to-sale per model/variant; empty until enough
+   * watched cars have sold. */
+  saleTimes: SaleTime[];
   loading: boolean;
   error: string | null;
 }
@@ -19,6 +22,7 @@ const INITIAL_STATE: ListingsState = {
   latestScrapeDate: null,
   hufPerEur: null,
   marketHistory: [],
+  saleTimes: [],
   loading: true,
   error: null,
 };
@@ -54,6 +58,7 @@ export function useListings(): ListingsState {
           // An export written before this field existed simply has no rate.
           hufPerEur: payload.hufPerEur ?? null,
           marketHistory: payload.marketHistory ?? [],
+          saleTimes: payload.saleTimes ?? [],
           loading: false,
           error: null,
         });
