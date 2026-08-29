@@ -17,6 +17,10 @@ const MIN_DAYS = 3;
  * or amber would claim a signal that isn't there. */
 const FLAT = 0.002;
 
+/** A missed day happens; two in a row means the record actually stopped,
+ * and the line should say so rather than bridging it. */
+const GAP_BREAK_MS = 2.5 * 86_400_000;
+
 // Read once at module load. The window cutoff only needs day granularity,
 // and a clock call inside render is impure - the same props would produce
 // a different window on a re-render that happened to cross midnight.
@@ -38,6 +42,29 @@ export function MarketTrendChart({ history, model }: MarketTrendChartProps) {
     const cutoff = LOADED_AT - windowDays * 86_400_000;
     return forModel.filter((d) => new Date(`${d.date}T12:00:00`).getTime() >= cutoff);
   }, [forModel, windowDays]);
+
+  // Plotted against real time, with the line cut wherever the record has
+  // a hole. On a category axis - recharts' default for a string dataKey -
+  // every point is one step wide whatever the date says, so a month the
+  // scraper missed was drawn one day wide with the line running straight
+  // through it: a chart claiming daily observation of a month nobody
+  // looked at. Holes are not hypothetical here. A failed run leaves one,
+  // and so does market_history itself, which drops any day that saw fewer
+  // than a handful of cars.
+  const series = useMemo(() => {
+    const out: { t: number; medianEur: number | null; day: MarketDay | null }[] = [];
+    days.forEach((d, i) => {
+      const t = dayStart(d.date);
+      const previous = i > 0 ? dayStart(days[i - 1].date) : null;
+      if (previous !== null && t - previous > GAP_BREAK_MS) {
+        // A null between the two ends is what breaks the stroke; recharts
+        // joins across nulls only when told to, and it is not told to.
+        out.push({ t: (previous + t) / 2, medianEur: null, day: null });
+      }
+      out.push({ t, medianEur: d.medianEur, day: d });
+    });
+    return out;
+  }, [days]);
 
   // Both numbers are rebased to the start of the window being looked at, so
   // a percentage always means "since the left edge of this chart" rather
@@ -158,13 +185,16 @@ export function MarketTrendChart({ history, model }: MarketTrendChartProps) {
         </div>
 
         <ResponsiveContainer width="100%" height={200}>
-          <LineChart data={days} margin={{ top: 6, right: 16, bottom: 4, left: 0 }}>
+          <LineChart data={series} margin={{ top: 6, right: 16, bottom: 4, left: 0 }}>
             <CartesianGrid stroke="var(--gridline)" vertical={false} />
             <XAxis
-              dataKey="date"
+              dataKey="t"
+              type="number"
+              scale="time"
+              domain={["dataMin", "dataMax"]}
               stroke="var(--baseline)"
               tick={{ fill: "var(--text-muted)", fontSize: 11 }}
-              tickFormatter={(iso: string) => iso.slice(5).replace("-", "/")}
+              tickFormatter={(t: number) => shortDate(t)}
               minTickGap={28}
             />
             <YAxis
@@ -191,6 +221,17 @@ export function MarketTrendChart({ history, model }: MarketTrendChartProps) {
   );
 }
 
+/** Local midnight for an ISO date, so a point sits on its own day
+ * whatever the reader's timezone. */
+function dayStart(iso: string): number {
+  return new Date(`${iso}T00:00:00`).getTime();
+}
+
+function shortDate(t: number): string {
+  const d = new Date(t);
+  return `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function percent(value: number | null | undefined): string {
   if (value === null || value === undefined) return "—";
   return `${value > 0 ? "+" : ""}${(value * 100).toFixed(1)}%`;
@@ -202,10 +243,19 @@ function toneFor(value: number | null | undefined): string {
   return value < 0 ? "text-status-good" : "text-status-warning";
 }
 
-function MarketTooltip({ active, payload }: { active?: boolean; payload?: { payload: MarketDay }[] }) {
+function MarketTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: { payload: { day: MarketDay | null } }[];
+}) {
   const money = useMoney();
   if (!active || !payload?.length) return null;
-  const day = payload[0].payload;
+  // The break inserted across a hole in the record carries no day, and
+  // there is nothing truthful to say about a date nobody scraped.
+  const day = payload[0].payload.day;
+  if (!day) return null;
   return (
     <div className="rounded-md border border-border bg-surface-1 px-2.5 py-1.5 text-xs shadow-lg">
       <div className="font-medium text-primary">{day.date}</div>

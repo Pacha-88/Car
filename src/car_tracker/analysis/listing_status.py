@@ -11,6 +11,22 @@ from datetime import date, datetime
 from car_tracker.db.models import ListingSnapshot
 
 
+def has_price(snapshot: ListingSnapshot) -> bool:
+    """Whether this snapshot actually recorded a price.
+
+    A zero is not a price. Nothing stores one deliberately, but a source
+    that cannot find the number on a card falls back to it - AutoScout24's
+    parser reads `priceRaw or 0` - and an unreadable price is a gap in the
+    record, not a decision by the seller. Left in, one such row splits an
+    unbroken run in two and reports a price held for ten days as held for
+    four; `price_points` reads it as a seller who dropped to nothing.
+
+    Shared with analysis/price_history.py so the two answers to "when did
+    this price start" cannot drift apart.
+    """
+    return bool(snapshot.price_original and snapshot.price_original > 0 and snapshot.price_eur > 0)
+
+
 def days_at_current_price(snapshots: list[ListingSnapshot], *, as_of: datetime) -> int:
     """How many days the most recent price in `snapshots` has held.
 
@@ -30,7 +46,9 @@ def days_at_current_price(snapshots: list[ListingSnapshot], *, as_of: datetime) 
     """
     if not snapshots:
         raise ValueError("no snapshots to compute a price duration from")
-    ordered = sorted(snapshots, key=lambda s: s.observed_at)
+    ordered = [s for s in sorted(snapshots, key=lambda s: s.observed_at) if has_price(s)]
+    if not ordered:
+        return 0
     current = (ordered[-1].currency_original, ordered[-1].price_original)
     held_since = ordered[-1].observed_at
     for snapshot in reversed(ordered):

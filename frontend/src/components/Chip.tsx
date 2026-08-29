@@ -30,7 +30,11 @@ export function Chip({ label, state, onClick, dot, swatch, count, title }: ChipP
     <button
       type="button"
       onClick={onClick}
-      aria-pressed={state !== "off"}
+      // `state === "on"`, not `!== "off"`: a calm chip is one nobody has
+      // chosen, so announcing it as pressed told a screen reader every
+      // filter on the page was active at rest - the exact claim the three
+      // states exist to stop the colours making.
+      aria-pressed={state === "on"}
       title={title}
       className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-[background-color,border-color,color,opacity] duration-150 ${STATE_CLASS[state]} ${
         state === "off" ? "opacity-60 hover:opacity-100" : ""

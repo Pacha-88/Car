@@ -189,3 +189,47 @@ def test_a_price_only_missing_in_the_original_currency_is_still_dropped():
     """price_eur is derived, so a zero original with a non-zero euro figure
     means the conversion invented a number the ad never carried."""
     assert price_points([_snap("a", 1, 40000.0, original=0.0, currency="HUF")]) == []
+
+
+# --- a run that broke halfway ----------------------------------------------
+
+
+def _day(model_of, day, count, price):
+    for i in range(count):
+        model_of[f"c{i}"] = "model_y"
+    return [_snap(f"c{i}", day, price) for i in range(count)]
+
+
+def test_a_scrape_that_broke_partway_is_not_a_one_day_crash():
+    """A run that hits a bot wall partway through stores a real but lopsided
+    sample. Its median is a fact about the outage, not about prices - drawn
+    as a point it is a 37% crash and a full recovery the next morning."""
+    model_of: dict[str, str] = {}
+    snaps: list = []
+    for day in range(1, 7):
+        snaps += _day(model_of, day, 300, 40000.0)
+    snaps += _day(model_of, 7, 20, 25000.0)  # the wall
+    for day in (8, 9):
+        snaps += _day(model_of, day, 300, 40000.0)
+
+    days = market_history(snaps, model_of=model_of)
+    assert [d.on.day for d in days] == [1, 2, 3, 4, 5, 6, 8, 9]
+    # Chained across the fragment, not through it.
+    assert all(d.index == pytest.approx(100.0) for d in days)
+
+
+def test_a_lasting_drop_in_coverage_is_absorbed_rather_than_freezing_the_chart():
+    """A country taken out of the run is a new normal, not a permanent
+    outage. Measured against a level that no longer exists, every later day
+    would fail the check and the chart would silently stop."""
+    model_of: dict[str, str] = {}
+    snaps: list = []
+    for day in range(1, 7):
+        snaps += _day(model_of, day, 300, 40000.0)
+    for day in range(7, 17):
+        snaps += _day(model_of, day, 30, 40000.0)
+
+    reported = [d.on.day for d in market_history(snaps, model_of=model_of)]
+    assert reported[:6] == [1, 2, 3, 4, 5, 6]
+    assert reported[-1] == 16, "reporting must resume at the new level"
+    assert len(reported) > 6

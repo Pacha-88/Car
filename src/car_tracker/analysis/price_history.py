@@ -34,12 +34,24 @@ from dataclasses import dataclass
 from datetime import date
 from statistics import median
 
+from car_tracker.analysis.listing_status import has_price
 from car_tracker.db.models import ListingSnapshot
 
 # Below this many cars a daily median is noise, and below this many matched
 # pairs a day's index step is one seller's decision rather than the market's.
 MIN_DAY_SAMPLE = 5
 MIN_MATCHED_PAIRS = 5
+
+# ...and below this share of what the last few days saw, the scrape broke
+# rather than the market shrinking. A run that hits a bot wall partway
+# through stores a real but lopsided sample - every German car and no
+# Hungarian ones, say - whose median is a fact about the outage, not about
+# prices, and which the chart would otherwise draw as a one-day crash.
+# Compared against recent days rather than the whole record so that adding
+# a source, or a market that genuinely grows, does not retroactively
+# invalidate everything before it.
+MIN_SHARE_OF_RECENT = 0.5
+RECENT_DAYS = 7
 
 
 @dataclass(frozen=True)
@@ -49,27 +61,12 @@ class PricePoint:
     price_original: float
 
 
-def _priced(snapshot: ListingSnapshot) -> bool:
-    """A zero is not a price.
-
-    Nothing stores one deliberately, but a source that cannot find the
-    number on a card falls back to it - AutoScout24's parser reads
-    `priceRaw or 0` - so one bad card becomes a snapshot asking nothing.
-    Left in, that snapshot reads as a seller who dropped their price to
-    zero: a "100% off" badge at the top of the biggest-drop sort, and a
-    day of the market index dragged down by a car nobody is selling for
-    nothing. Both questions here are about prices, so a row without one
-    has no place in either answer.
-    """
-    return bool(snapshot.price_original and snapshot.price_original > 0 and snapshot.price_eur > 0)
-
-
 def price_points(snapshots: list[ListingSnapshot]) -> list[PricePoint]:
     """One point per price the seller actually set, oldest first."""
     points: list[PricePoint] = []
     previous: tuple[str, float] | None = None
     for snapshot in sorted(snapshots, key=lambda s: s.observed_at):
-        if not _priced(snapshot):
+        if not has_price(snapshot):
             continue
         asked = (snapshot.currency_original, snapshot.price_original)
         if asked == previous:
@@ -117,7 +114,7 @@ def market_history(
     by_day: dict[tuple[str, date], dict[str, tuple[float, float]]] = defaultdict(dict)
     for snapshot in snapshots:
         model = model_of.get(snapshot.listing_id)
-        if model is None or not _priced(snapshot):
+        if model is None or not has_price(snapshot):
             continue
         # One snapshot per listing per day: a day scraped twice would
         # otherwise weight those cars double in the median.
@@ -131,9 +128,25 @@ def market_history(
         days = sorted(day for m, day in by_day if m == model)
         index = 100.0
         previous_day: date | None = None
+        recent_counts: list[int] = []
         for day in days:
             cars = by_day[(model, day)]
             if len(cars) < min_day_sample:
+                continue
+            partial = bool(recent_counts) and len(cars) < MIN_SHARE_OF_RECENT * median(recent_counts)
+            # Recorded whether or not the day is reported, so the window
+            # tracks what is actually being scraped. Gate on reported days
+            # alone and a lasting drop in coverage - a country taken out of
+            # the run, a source retired - measures itself against a level
+            # that no longer exists and silently freezes the chart from
+            # that day on. This way one bad day is dropped and a new normal
+            # is absorbed within a week.
+            recent_counts.append(len(cars))
+            del recent_counts[:-RECENT_DAYS]
+            if partial:
+                # Skipping also keeps it out of the index: `previous_day`
+                # stays put, so the next good day is chained against the
+                # last good one rather than against a fragment.
                 continue
             if previous_day is not None:
                 index *= _step(by_day[(model, previous_day)], cars)

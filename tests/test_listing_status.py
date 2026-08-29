@@ -85,3 +85,15 @@ def test_a_genuine_forint_price_drop_still_resets_the_clock():
         _huf_snap(0, 14_500_000, 0.0027402),
     ]
     assert days_at_current_price(snapshots, as_of=AS_OF) == 2
+
+
+def test_an_unreadable_price_does_not_restart_the_clock():
+    """A source that cannot read a card falls back to zero. That is a gap in
+    the record, not the seller setting a new price - counted as one, it
+    reported a price held six days as held three."""
+    snapshots = [_snap(6, 40_000), _snap(5, 40_000), _snap(4, 0), _snap(3, 40_000), _snap(0, 40_000)]
+    assert days_at_current_price(snapshots, as_of=AS_OF) == 6
+
+
+def test_a_listing_with_no_readable_price_at_all_scores_zero():
+    assert days_at_current_price([_snap(3, 0)], as_of=AS_OF) == 0
