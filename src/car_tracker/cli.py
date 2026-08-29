@@ -115,6 +115,18 @@ def cmd_scrape(args: argparse.Namespace) -> None:
     print(f"stored {len(raw_listings)} listings from {args.source}/{args.model}/{args.country}")
 
 
+def _store_batch(raw_listings: list[RawListing], *, rates_to_eur: dict[str, float], observed_at: datetime) -> None:
+    """Store one combo's listings with one lookup query, not one per car."""
+    with session_scope() as session:
+        ids = [f"{raw.source}:{raw.source_listing_id}" for raw in raw_listings]
+        known: dict[str, Listing] = {
+            listing.id: listing
+            for listing in session.execute(select(Listing).where(Listing.id.in_(ids))).scalars()
+        }
+        for raw in raw_listings:
+            _upsert(session, raw, rates_to_eur=rates_to_eur, observed_at=observed_at, known=known)
+
+
 def _run_scrape(targets: dict[str, dict[str, list[str]]], *, max_pages: int | None, label: str) -> None:
     """Scrape every combo in `targets` once, then retire what's gone.
 
@@ -175,9 +187,7 @@ def _run_scrape(targets: dict[str, dict[str, list[str]]], *, max_pages: int | No
                             raw_listings = source.fetch_listings(model=model, country=country, max_pages=max_pages)
                         except PartialResults as partial:
                             raw_listings, partial_reason = partial.listings, partial.reason
-                    with session_scope() as session:
-                        for raw in raw_listings:
-                            _upsert(session, raw, rates_to_eur=rates_to_eur, observed_at=now)
+                    _store_batch(raw_listings, rates_to_eur=rates_to_eur, observed_at=now)
                     total_stored += len(raw_listings)
                     stored_per_source[source_name] = stored_per_source.get(source_name, 0) + len(raw_listings)
                     if partial_reason is None:
@@ -496,7 +506,11 @@ def cmd_export(args: argparse.Namespace) -> None:
                     "modelYear": listing.model_year,
                     "firstRegistration": listing.first_registration.isoformat() if listing.first_registration else None,
                     "url": listing.url,
-                    "titleRaw": listing.title_raw,
+                    # ensure_title covers rows stored before the never-empty
+                    # guarantee existed; they only repair in the DB when their
+                    # site serves them again, and the two datacenter-blocked
+                    # sources may wait days for a scrape-local run.
+                    "titleRaw": ensure_title(listing.title_raw, model=listing.model),
                     "photoUrls": listing.photo_urls,
                     "sellerType": listing.seller_type,
                     "location": listing.location,
@@ -532,9 +546,28 @@ def cmd_export(args: argparse.Namespace) -> None:
     print(f"exported {len(listings_out)} active listings to {args.out}")
 
 
-def _upsert(session, raw: RawListing, *, rates_to_eur: dict[str, float], observed_at: datetime) -> None:
+def _upsert(
+    session,
+    raw: RawListing,
+    *,
+    rates_to_eur: dict[str, float],
+    observed_at: datetime,
+    known: dict[str, Listing] | None = None,
+) -> None:
+    """Store one listing. `known` is an optional prefetched {id: Listing}.
+
+    Without it, every listing costs its own SELECT round trip - which is
+    where the nightly run's time actually went: ~3.200 listings against a
+    Supabase an ocean away from the runner meant thousands of ~100ms round
+    trips, and the scrape step took twenty minutes while every other step
+    took seconds. Callers with a batch prefetch the whole combo's rows in
+    one query instead (see _store_batch); the cache also picks up rows this
+    run just created, so a car that appears twice in one combo (pages
+    shift underneath a paginated scrape) updates the same object instead
+    of colliding on insert.
+    """
     listing_id = f"{raw.source}:{raw.source_listing_id}"
-    listing = session.get(Listing, listing_id)
+    listing = known.get(listing_id) if known is not None else session.get(Listing, listing_id)
     # Before anything reads the date: a slipped digit ("12/2002" for a Model
     # Y) is a normal marketplace typo, and chassis detection, the year
     # filter and the depreciation curve all take it at face value.
@@ -572,6 +605,8 @@ def _upsert(session, raw: RawListing, *, rates_to_eur: dict[str, float], observe
             is_active=True,
         )
         session.add(listing)
+        if known is not None:
+            known[listing_id] = listing
     else:
         listing.last_seen_at = observed_at
         listing.is_active = True

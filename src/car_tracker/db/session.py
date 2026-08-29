@@ -65,10 +65,21 @@ def connect_args_for(url: str) -> dict[str, object]:
     return {}
 
 
+# One engine (and thus one connection pool) per database URL, for the life
+# of the process. session_scope() used to build a fresh engine per call,
+# which meant every combo of a scrape opened its own TCP+TLS+auth handshake
+# to Supabase and threw the connection away afterwards - pure overhead, and
+# it also defeats SQLAlchemy's pooling entirely.
+_ENGINES: dict[str, object] = {}
+
+
 def get_engine(database_url: str | None = None):
     raw = database_url or os.environ.get("DATABASE_URL") or f"sqlite:///{DEFAULT_SQLITE_PATH}"
     url = normalize_database_url(raw)
-    return create_engine(url, connect_args=connect_args_for(url))
+    engine = _ENGINES.get(url)
+    if engine is None:
+        engine = _ENGINES[url] = create_engine(url, connect_args=connect_args_for(url))
+    return engine
 
 
 def init_db(engine=None) -> None:

@@ -916,3 +916,103 @@ def test_ecb_downtime_with_no_stored_rates_still_scrapes_the_eur_markets(isolate
         stored = {listing.id for listing in session.execute(select(Listing)).scalars()}
     assert "fake_ok:model_y-DE" in stored, "the EUR market must still have been scraped and stored"
     assert _is_active(isolated_db, "fake_hu:old") is True, "the failed HUF source retires nothing"
+
+
+# --- batched storage ------------------------------------------------------
+# The nightly run stores ~3.200 listings into a Supabase an ocean away from
+# the runner. One SELECT per listing plus row-at-a-time writes meant ~1.200
+# statements per 400-listing combo (measured on real Postgres through
+# PgBouncer); the batch path does the same work in 3. At ~100ms per round
+# trip that was the difference between a 20-minute scrape step and a
+# 6-minute one.
+
+
+def _raw(i: int, *, price: float = 30_000) -> RawListing:
+    return RawListing(
+        source="fake_ok",
+        source_listing_id=f"car-{i}",
+        model="model_y",
+        country="DE",
+        url=f"https://example.com/{i}",
+        price_original=price,
+        currency_original="EUR",
+        mileage_km=50_000 + i,
+        model_year=2023,
+        title_raw=f"Car {i}",
+        photo_urls=[f"https://img/{i}.jpg"],
+    )
+
+
+def test_the_batch_path_stores_exactly_what_the_row_at_a_time_path_stores(isolated_db):
+    rates = {"EUR": 1.0}
+    now = utc_now()
+    with session_scope(get_engine(isolated_db)) as session:
+        for i in range(30):
+            cli._upsert(session, _raw(i), rates_to_eur=rates, observed_at=now)
+
+    import os
+
+    db2 = f"{isolated_db.removesuffix('.db')}-batch.db"
+    os.environ["DATABASE_URL"] = db2
+    init_db(get_engine(db2))
+    cli._store_batch([_raw(i) for i in range(30)], rates_to_eur=rates, observed_at=now)
+
+    def dump(url):
+        with session_scope(get_engine(url)) as session:
+            return sorted(
+                (l.id, l.title_raw, tuple(l.photo_urls), l.model_year, l.last_seen_at, l.is_active)
+                for l in session.execute(select(Listing)).scalars()
+            )
+
+    os.environ["DATABASE_URL"] = isolated_db
+    assert dump(isolated_db) == dump(db2)
+
+
+def test_the_same_car_twice_in_one_combo_updates_one_row_instead_of_colliding(isolated_db):
+    """Pages shift underneath a paginated scrape, so one combo can hand the
+    same listing back twice. The prefetch cache must catch the row this run
+    just created, or the second occurrence is a duplicate-key insert."""
+    twice = [_raw(1, price=30_000), _raw(1, price=29_500)]
+    cli._store_batch(twice, rates_to_eur={"EUR": 1.0}, observed_at=utc_now())
+
+    with session_scope(get_engine(isolated_db)) as session:
+        rows = list(session.execute(select(Listing)).scalars())
+        snaps = list(session.execute(select(ListingSnapshot)).scalars())
+    assert len(rows) == 1
+    assert len(snaps) == 2, "both sightings still record a snapshot"
+
+
+def test_export_titles_rows_stored_before_the_never_empty_guarantee(isolated_db, tmp_path):
+    """Old rows only repair in the DB when their site serves them again -
+    and the datacenter-blocked sources may wait days for a scrape-local
+    run. The export is the last line: no JSON ships an empty title."""
+    with session_scope(get_engine(isolated_db)) as session:
+        session.add(
+            Listing(
+                id="tesla:VIN1",
+                source="tesla",
+                source_listing_id="VIN1",
+                model="model_y",
+                country="DE",
+                url="https://example.com/1",
+                title_raw=None,
+                first_seen_at=utc_now(),
+                last_seen_at=utc_now(),
+                is_active=True,
+            )
+        )
+        session.add(
+            ListingSnapshot(
+                listing_id="tesla:VIN1",
+                observed_at=utc_now(),
+                price_original=30_000,
+                currency_original="EUR",
+                price_eur=30_000,
+                mileage_km=10_000,
+            )
+        )
+
+    out = tmp_path / "out.json"
+    cli.cmd_export(argparse.Namespace(out=str(out)))
+    payload = json.loads(out.read_text())
+    assert payload["listings"][0]["titleRaw"] == "Tesla Model Y"

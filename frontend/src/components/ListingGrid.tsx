@@ -187,7 +187,7 @@ function ListingCard({
       className="group flex flex-col overflow-hidden rounded-lg border border-border bg-surface-1 transition-colors hover:border-series-1/50"
     >
       <div className="relative aspect-[4/3] w-full bg-surface-2">
-        <ListingPhoto src={listing.photoUrls[0]} />
+        <ListingPhoto src={listing.photoUrls[0]} withLabel />
         <span className="absolute left-1.5 top-1.5 flex items-center gap-1 rounded bg-surface-1/90 px-1.5 py-0.5 text-[10px] font-medium text-secondary">
           <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: SOURCE_COLOR_VAR[listing.source] }} />
           {COUNTRY_FLAGS[listing.country] ?? listing.country} {formatYearMonth(listing.firstRegistration) ?? "—"}
