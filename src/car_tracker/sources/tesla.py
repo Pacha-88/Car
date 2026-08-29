@@ -49,6 +49,47 @@ MARKET_REFERENCE_POINTS: dict[str, dict[str, object]] = {
     "HU": {"lat": 47.4979, "lng": 19.0402, "zip": "1051", "language": "en"},
 }
 
+# tesla.com site locale per market - the order deep link below needs it.
+MARKET_LOCALES = {"DE": "de_DE", "AT": "de_AT", "HU": "hu_HU"}
+
+
+def listing_url(model: str, country: str, vin: str) -> str:
+    """The order page for one used car.
+
+    The first guess here - /{cc}/inventory/used/{model}/{vin} - was marked
+    unverified in this file and turned out to 404 on every listing (the
+    inventory path is the *search* page, which takes no VIN). The pattern
+    community inventory trackers have deep-linked for years is the order
+    page: tesla.com/{locale}/{model}/order/{VIN}. Unverifiable from this
+    sandbox (tesla.com refuses datacenter traffic outright), so the proof
+    is a click after the next scrape-local run.
+    """
+    locale = MARKET_LOCALES.get(country, "en_US")
+    return f"https://www.tesla.com/{locale}/{MODEL_CODES[model]}/order/{vin}?titleStatus=used"
+
+
+def stock_photo(item: dict, *, model: str) -> list[str]:
+    """A configurator render for a car with no inspection photos.
+
+    Many used-inventory entries carry an empty VehiclePhotos (no inspection
+    shoot yet) - which left every one of them as a bare placeholder card.
+    Tesla's own site shows those cars as a configurator render built from
+    the option codes, and the compositor endpoint that draws it is public
+    and hotlinkable; every community inventory tracker uses it. No codes,
+    no render - an empty list keeps the placeholder.
+    """
+    codes = item.get("OptionCodeList") or []
+    if isinstance(codes, str):
+        codes = codes.split(",")
+    cleaned = [c.strip().lstrip("$") for c in codes if c and c.strip()]
+    if not cleaned:
+        return []
+    options = ",".join(f"${c}" for c in cleaned)
+    return [
+        "https://static-assets.tesla.com/configurator/compositor"
+        f"?context=design_studio_2&options={options}&view=STUD_3QTR&model={MODEL_CODES[model]}&size=1441&bkba_opt=1"
+    ]
+
 
 class TeslaSource(Source):
     name = "tesla"
@@ -174,11 +215,7 @@ def _compose_title(item: dict, *, model: str) -> str:
 
 
 def parse_item(item: dict, *, model: str, country: str) -> RawListing:
-    """Field mapping verified against a real response (see module docstring).
-
-    `url` is the one unconfirmed piece — no direct listing-URL field showed
-    up in the sample, so this is still a guessed path pattern.
-    """
+    """Field mapping verified against a real response (see module docstring)."""
     vin = item.get("VIN", "")
     odometer = item.get("Odometer")
     unit = item.get("OdometerTypeShort") or item.get("OdometerType") or "km"
@@ -186,14 +223,16 @@ def parse_item(item: dict, *, model: str, country: str) -> RawListing:
         odometer = round(odometer * 1.60934)
 
     paint = item.get("PAINT") or []
-    photos = [p["imageUrl"] for p in item.get("VehiclePhotos", []) if p.get("imageUrl")]
+    photos = [p["imageUrl"] for p in item.get("VehiclePhotos", []) if p.get("imageUrl")] or stock_photo(
+        item, model=model
+    )
 
     return RawListing(
         source="tesla",
         source_listing_id=vin,
         model=model,
         country=country,
-        url=f"https://www.tesla.com/{country.lower()}/inventory/used/{MODEL_CODES[model]}/{vin}",
+        url=listing_url(model, country, vin),
         price_original=float(item.get("Price", 0)),
         currency_original=item.get("CurrencyCode") or market_currency(country),
         mileage_km=odometer,

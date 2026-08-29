@@ -184,3 +184,54 @@ def test_a_failure_on_the_very_first_page_still_raises(monkeypatch):
     source = _FlakyPageSource(good_pages=0)
     with pytest.raises(RuntimeError):
         source.fetch_listings(model="model_y", country="DE")
+
+
+# --- the listing URL and the photo fallback -------------------------------
+# The first URL guess ("/de/inventory/used/my/{vin}") 404ed on every real
+# click - the inventory path is the search page and takes no VIN. And cars
+# with no inspection photos rendered as bare placeholders even though
+# Tesla's own site shows them as a configurator render.
+
+from car_tracker.sources.tesla import listing_url, stock_photo
+
+
+@pytest.mark.parametrize(
+    ("country", "expected"),
+    [
+        ("DE", "https://www.tesla.com/de_DE/my/order/VIN123?titleStatus=used"),
+        ("AT", "https://www.tesla.com/de_AT/my/order/VIN123?titleStatus=used"),
+        ("HU", "https://www.tesla.com/hu_HU/my/order/VIN123?titleStatus=used"),
+    ],
+)
+def test_listing_url_is_the_order_deep_link(country, expected):
+    assert listing_url("model_y", country, "VIN123") == expected
+
+
+def test_listing_url_model_3():
+    assert listing_url("model_3", "DE", "V") == "https://www.tesla.com/de_DE/m3/order/V?titleStatus=used"
+
+
+def test_inspection_photos_win_over_the_render():
+    raw = parse_item({**LONG_RANGE_ITEM, "OptionCodeList": "MTY13,PPSW"}, model="model_y", country="DE")
+    assert raw.photo_urls[0].startswith("https://mytcore-inventory-assests.tesla.com/")
+
+
+@pytest.mark.parametrize(
+    "codes",
+    ["MTY13,PPSW,WY19B", ["MTY13", "PPSW", "WY19B"], "$MTY13, $PPSW , $WY19B"],
+)
+def test_a_car_with_no_photos_gets_a_configurator_render(codes):
+    """The API hands option codes as a comma string; a list and pre-$-prefixed
+    codes are accepted too rather than guessed about."""
+    item = {**RWD_ITEM_MINIMAL, "OptionCodeList": codes}
+    raw = parse_item(item, model="model_y", country="DE")
+    assert len(raw.photo_urls) == 1
+    url = raw.photo_urls[0]
+    assert url.startswith("https://static-assets.tesla.com/configurator/compositor?")
+    assert "options=$MTY13,$PPSW,$WY19B" in url
+    assert "model=my" in url
+
+
+def test_no_photos_and_no_codes_keeps_the_placeholder():
+    raw = parse_item(RWD_ITEM_MINIMAL, model="model_y", country="DE")
+    assert raw.photo_urls == []
