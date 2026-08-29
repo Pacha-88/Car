@@ -19,6 +19,15 @@ CHALLENGE_HTML = "<html><head><title>Just a moment...</title></head><body>checki
 BLOCK_HTML = "<html><body>Sorry, you have been blocked</body></html>"
 
 
+@pytest.fixture(autouse=True)
+def _no_browser_leaks_between_tests():
+    """The browser is now shared for a whole run, so a context created by one
+    test must not be inherited by the next."""
+    fetch.close_browser()
+    yield
+    fetch.close_browser()
+
+
 # --- classification ----------------------------------------------------
 
 def test_a_real_page_is_usable():
@@ -113,24 +122,28 @@ def test_missing_browser_binary_becomes_an_actionable_message(monkeypatch):
         def launch_persistent_context(self, **kwargs):
             raise RuntimeError("BrowserType.launch: Executable doesn't exist at /somewhere")
 
-    class _FakePlaywright:
+    class _FakePlaywrightInstance:
         chromium = _FakeChromium()
 
-        def __enter__(self):
-            return self
+        def stop(self):
+            return None
 
-        def __exit__(self, *exc):
-            return False
+    class _FakeSyncPlaywright:
+        """Matches the .start()/.stop() shape the shared session uses."""
+
+        def start(self):
+            return _FakePlaywrightInstance()
 
     monkeypatch.setattr(fetch, "_fetch_with_impersonation", lambda url, **kw: (403, CHALLENGE_HTML))
-    monkeypatch.setattr(fetch, "sync_playwright", _FakePlaywright, raising=False)
 
     import sys
     import types
 
     fake_module = types.ModuleType("playwright.sync_api")
-    fake_module.sync_playwright = _FakePlaywright
+    fake_module.sync_playwright = _FakeSyncPlaywright
     monkeypatch.setitem(sys.modules, "playwright.sync_api", fake_module)
+    monkeypatch.setitem(sys.modules, "playwright", types.ModuleType("playwright"))
+    sys.modules["playwright"].sync_api = fake_module
 
     with pytest.raises(FetchError) as exc:
         fetch_html("https://example.com")
@@ -251,3 +264,52 @@ def test_absurd_retry_after_is_capped(monkeypatch):
 
     fetch._fetch_with_impersonation("https://example.com", accept_language="en", timeout=5)
     assert waits and max(waits) <= fetch._MAX_RETRY_AFTER_SECONDS
+
+
+def test_browser_is_reused_across_fetches(monkeypatch):
+    """One run fetches dozens of URLs. Launching a browser per URL was slow
+    and, in headed mode, opened and closed a window for every page."""
+    launches = {"n": 0}
+    pages = {"n": 0}
+
+    class _FakePage:
+        def goto(self, url, **kw):
+            pages["n"] += 1
+            return type("R", (), {"status": 200})()
+
+        def content(self):
+            return LISTINGS_HTML
+
+        def close(self):
+            return None
+
+    class _FakeContext:
+        def add_init_script(self, _s):
+            return None
+
+        def new_page(self):
+            return _FakePage()
+
+        def close(self):
+            return None
+
+    def _fake_launch(playwright, *, headed):
+        launches["n"] += 1
+        return _FakeContext()
+
+    import sys
+    import types
+
+    fake_module = types.ModuleType("playwright.sync_api")
+    fake_module.sync_playwright = lambda: type("S", (), {"start": lambda self: object(), "stop": lambda self: None})()
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", fake_module)
+    monkeypatch.setitem(sys.modules, "playwright", types.ModuleType("playwright"))
+    sys.modules["playwright"].sync_api = fake_module
+    monkeypatch.setattr(fetch, "_launch_browser", _fake_launch)
+
+    for _ in range(3):
+        status, body = fetch._fetch_with_browser("https://example.com", accept_language="en", timeout=5)
+        assert status == 200
+
+    assert launches["n"] == 1, "the browser should start once, not once per fetch"
+    assert pages["n"] == 3, "each fetch still gets its own tab"

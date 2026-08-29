@@ -43,6 +43,7 @@ issuing more traffic than a person would.
 
 from __future__ import annotations
 
+import atexit
 import os
 import re
 import time
@@ -108,6 +109,57 @@ def _browser_profile_dir() -> Path:
     profile = base / "car-tracker" / "browser-profile"
     profile.mkdir(parents=True, exist_ok=True)
     return profile
+
+
+def headed_mode() -> bool:
+    """Whether to show a real window a person can interact with."""
+    return os.environ.get("CAR_TRACKER_HEADED", "").strip().lower() in ("1", "true", "yes")
+
+
+# One browser for the whole run, not one per page. A run fetches dozens of
+# URLs (six Tesla markets plus pagination), and launching a fresh browser
+# for each was both slow and - in headed mode - a flurry of windows opening
+# and closing with no explanation. Reusing it also keeps whatever clearance
+# the first challenge earned warm for every later page.
+_SESSION: dict[str, object] = {}
+
+
+def _shared_context(headed: bool):
+    """The run's browser context, started on first use."""
+    if _SESSION.get("context") is not None and _SESSION.get("headed") == headed:
+        return _SESSION["context"]
+    close_browser()  # a mode switch means the old context is the wrong kind
+
+    from playwright.sync_api import sync_playwright
+
+    playwright = sync_playwright().start()
+    try:
+        context = _launch_browser(playwright, headed=headed)
+    except Exception:
+        playwright.stop()
+        raise
+    context.add_init_script(_STEALTH_INIT)
+    _SESSION["playwright"] = playwright
+    _SESSION["context"] = context
+    _SESSION["headed"] = headed
+    return context
+
+
+def close_browser() -> None:
+    """Shut the shared browser down. Safe to call when none is running."""
+    context = _SESSION.pop("context", None)
+    playwright = _SESSION.pop("playwright", None)
+    _SESSION.pop("headed", None)
+    for closer in (getattr(context, "close", None), getattr(playwright, "stop", None)):
+        if closer is None:
+            continue
+        try:
+            closer()
+        except Exception:
+            pass  # shutting down; a failure here must not mask real errors
+
+
+atexit.register(close_browser)
 
 
 def _fetch_with_impersonation(url: str, *, accept_language: str, timeout: float) -> tuple[int, str] | None:
@@ -177,7 +229,7 @@ def _launch_browser(playwright, *, headed: bool):
 def _fetch_with_browser(url: str, *, accept_language: str, timeout: float) -> tuple[int, str]:
     """Step 2/3. Raises FetchError with an actionable message if unavailable."""
     try:
-        from playwright.sync_api import sync_playwright
+        import playwright.sync_api  # noqa: F401 - presence check only
     except ImportError as exc:  # pragma: no cover - depends on the install
         raise FetchError(
             f"{url} needs a real browser, which isn't installed. Install the browser extra:\n"
@@ -185,52 +237,61 @@ def _fetch_with_browser(url: str, *, accept_language: str, timeout: float) -> tu
             "  playwright install chromium"
         ) from exc
 
-    headed = os.environ.get("CAR_TRACKER_HEADED", "").strip().lower() in ("1", "true", "yes")
+    headed = headed_mode()
+    try:
+        context = _shared_context(headed)
+    except Exception as exc:
+        # Playwright is installed but no usable browser binary is - the
+        # normal state right after `pip install playwright`. Its own error
+        # is a wall of stack trace; this runs on the owner's laptop, so say
+        # the one command that fixes it. The wrapper scripts also grep for
+        # "playwright install" to auto-install.
+        raise FetchError(
+            f"{url} needs a real browser. Playwright is installed but its browser isn't:\n"
+            "  playwright install chromium\n"
+            f"(original error: {str(exc).splitlines()[0]})"
+        ) from exc
 
-    with sync_playwright() as playwright:
-        try:
-            context = _launch_browser(playwright, headed=headed)
-        except Exception as exc:
-            # Playwright is installed but no usable browser binary is - the
-            # normal state right after `pip install playwright`. Its own
-            # error is a wall of stack trace; this runs on the owner's
-            # laptop, so say the one command that fixes it. The wrapper
-            # scripts also grep for "playwright install" to auto-install.
-            raise FetchError(
-                f"{url} needs a real browser. Playwright is installed but its browser isn't:\n"
-                "  playwright install chromium\n"
-                f"(original error: {str(exc).splitlines()[0]})"
-            ) from exc
-        try:
-            context.add_init_script(_STEALTH_INIT)
-            page = context.new_page()
-            response = page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
-            status = response.status if response else 0
-            body = page.content()
-            if not looks_unusable(status, body):
-                return status, body
-
-            # A challenge clears itself after a few seconds of JS. In headed
-            # mode there's a person at the keyboard, so wait long enough for
-            # them to click a checkbox too - and say so, since an unexplained
-            # browser window is just confusing. Either way the cleared cookie
-            # lands in the persistent profile and serves later runs.
+    page = context.new_page()
+    try:
+        response = page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
+        status = response.status if response else 0
+        body = page.content()
+        if not looks_unusable(status, body):
             if headed:
-                print(
-                    f"\n  A browser window is open on {url}\n"
-                    "  If it shows a 'verify you are human' check, solve it there - this waits up to"
-                    f" {_HEADED_SOLVE_SECONDS}s, and the result is remembered for future runs.\n",
-                    flush=True,
-                )
-            deadline = time.monotonic() + (_HEADED_SOLVE_SECONDS if headed else _AUTO_SOLVE_SECONDS)
-            while time.monotonic() < deadline:
-                page.wait_for_timeout(1500)
-                body = page.content()
-                if not looks_unusable(200, body):
-                    return 200, body
+                print(f"  browser: {url} loaded fine, no challenge", flush=True)
             return status, body
-        finally:
-            context.close()
+
+        # A challenge clears itself after a few seconds of JS. In headed
+        # mode there's a person at the keyboard, so wait long enough for
+        # them to click a checkbox too - and say so, since an unexplained
+        # browser window is just confusing. Either way the cleared cookie
+        # lands in the persistent profile and serves later runs.
+        if headed:
+            print(
+                f"\n  A browser window is open on {url}\n"
+                f"  It shows: {describe(status, body)}\n"
+                "  If it asks you to verify you're human, solve it in that window - this waits up to"
+                f" {_HEADED_SOLVE_SECONDS}s, and the result is remembered for future runs.\n",
+                flush=True,
+            )
+        deadline = time.monotonic() + (_HEADED_SOLVE_SECONDS if headed else _AUTO_SOLVE_SECONDS)
+        while time.monotonic() < deadline:
+            page.wait_for_timeout(1500)
+            body = page.content()
+            if not looks_unusable(200, body):
+                if headed:
+                    print("  browser: challenge cleared, continuing\n", flush=True)
+                return 200, body
+        if headed:
+            print("  browser: still blocked after waiting\n", flush=True)
+        return status, body
+    finally:
+        # Close the tab, keep the browser (and its cookies) for the next URL.
+        try:
+            page.close()
+        except Exception:
+            pass
 
 
 def fetch_html(url: str, *, accept_language: str = "en-US,en;q=0.9", timeout: float = 30.0) -> str:

@@ -131,6 +131,7 @@ def _run_scrape(targets: dict[str, dict[str, list[str]]], *, max_pages: int | No
     total_stored = 0
     failures: list[str] = []
     failed_sources: set[str] = set()
+    stored_per_source: dict[str, int] = {}
 
     first_combo = True
     for source_name, target in targets.items():
@@ -153,6 +154,7 @@ def _run_scrape(targets: dict[str, dict[str, list[str]]], *, max_pages: int | No
                             _upsert(session, raw, rates_to_eur=rates_to_eur, observed_at=now)
                     print(f"ok    {combo}: {len(raw_listings)} listings")
                     total_stored += len(raw_listings)
+                    stored_per_source[source_name] = stored_per_source.get(source_name, 0) + len(raw_listings)
                 except Exception as exc:  # noqa: BLE001 - one combo's failure must not abort the rest
                     print(f"FAILED {combo}: {exc}")
                     failures.append(combo)
@@ -163,6 +165,18 @@ def _run_scrape(targets: dict[str, dict[str, list[str]]], *, max_pages: int | No
         print(f"retired {source_name}: {count} listing(s) no longer on the site")
     for source_name in sorted(failed_sources):
         print(f"kept    {source_name}: not retiring anything, this source had failing combo(s) this run")
+
+    # A per-source verdict, because "0 listings stored" across a mixed run
+    # doesn't say which site worked - and this is read by someone watching a
+    # browser window open and close, not by someone reading a stack trace.
+    for source_name in targets:
+        got = stored_per_source.get(source_name, 0)
+        if source_name in failed_sources and got == 0:
+            print(f"  {source_name}: NO data (every attempt was refused)")
+        elif source_name in failed_sources:
+            print(f"  {source_name}: {got} listings (some attempts were refused)")
+        else:
+            print(f"  {source_name}: {got} listings")
 
     print(f"{label} done: {total_stored} listings stored across {len(targets)} sources, {len(failures)} combo(s) failed")
     if failures:
