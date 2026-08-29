@@ -23,6 +23,19 @@ earlier fixed-priority version of this function checked for "performance"
 unconditionally first and misclassified it. Real ad titles put the actual
 trim near the start, so whichever keyword appears earliest is trusted.
 
+The long-range vocabulary is wider than the words Tesla uses. Sellers
+write "LongRange", "Long-Range", "Long R.", a bare "LR", and German ads
+say "Maximale Reichweite" outright. Measured over 621 live listings those
+five spellings account for 19 of the 83 cars sitting in the catch-all
+bucket, and not one of them fires on a car another keyword already
+places, so none can move a correct answer.
+
+What is deliberately NOT in here is "Dual Motor" / "Allradantrieb" on its
+own. It would place ten more cars and it would be a guess: Performance is
+dual-motor AWD too, so a title saying only "Dual AWD" is genuinely
+ambiguous between the two, and this returns the catch-all rather than
+invent a trim - the same rule colour extraction follows.
+
 "Long Range RWD" is its own bucket, not a guess between the two: it showed
 up 22 times in the first 621 real listings (it is the current single-motor
 Long Range Model Y in the EU), and bucketing those as long_range_awd made
@@ -33,6 +46,8 @@ bucket because "AWD" is right there).
 """
 
 from __future__ import annotations
+
+import re
 
 LONG_RANGE_AWD = "long_range_awd"
 LONG_RANGE_RWD = "long_range_rwd"
@@ -45,7 +60,12 @@ _EXACT_CODES = {
     "lr_rwd": LONG_RANGE_RWD,  # unconfirmed in a live Tesla sample, but the obvious sibling of lr_awd
     "rwd": RWD,
 }
-_RWD_PHRASES = ("rwd", "rear wheel drive", "standard range")
+# `long\s*range` covers "long range" and the unspaced "longrange"; the
+# hyphenated forms are flattened to spaces before matching. `\blr\b` and
+# `perf\.` are bounded so they cannot fire from inside another word.
+_LONG_RANGE_RE = re.compile(r"long\s*range|maximale\s+reichweite|long\s*r\.|\blr\b")
+_PERFORMANCE_RE = re.compile(r"performance|\bperf\.")
+_RWD_RE = re.compile(r"rwd|rear wheel drive|standard range")
 _AWD_SIGNALS = ("awd", "allrad", "dual motor", "4x4", "4wd")
 
 
@@ -62,17 +82,15 @@ def normalize_variant(text: str | None) -> str | None:
     lowered = lowered.replace("-", " ")
 
     matches: list[tuple[int, str]] = []
-    performance_idx = lowered.find("performance")
-    if performance_idx != -1:
-        matches.append((performance_idx, PERFORMANCE))
-    long_range_idx = lowered.find("long range")
-    if long_range_idx != -1:
-        matches.append((long_range_idx, LONG_RANGE_AWD))
-    for phrase in _RWD_PHRASES:
-        idx = lowered.find(phrase)
-        if idx != -1:
-            matches.append((idx, RWD))
-            break
+    performance = _PERFORMANCE_RE.search(lowered)
+    if performance:
+        matches.append((performance.start(), PERFORMANCE))
+    long_range = _LONG_RANGE_RE.search(lowered)
+    if long_range:
+        matches.append((long_range.start(), LONG_RANGE_AWD))
+    rwd = _RWD_RE.search(lowered)
+    if rwd:
+        matches.append((rwd.start(), RWD))
 
     if not matches:
         return OTHER
@@ -82,7 +100,7 @@ def normalize_variant(text: str | None) -> str | None:
     # not a Long Range AWD with noise after it.
     if (
         winner in (LONG_RANGE_AWD, RWD)
-        and long_range_idx != -1
+        and long_range is not None
         and any(kind == RWD for _, kind in matches)
         and not any(signal in lowered for signal in _AWD_SIGNALS)
     ):

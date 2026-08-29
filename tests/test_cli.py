@@ -1153,3 +1153,36 @@ def test_silence_about_the_date_leaves_the_chassis_alone(isolated_db):
         listing = session.get(Listing, "autoscout24:typo")
         assert listing.chassis_gen == "juniper"
         assert listing.first_registration == date(2025, 9, 1)
+
+
+def _listing_row(*, source: str, title: str, variant: str | None) -> Listing:
+    return Listing(
+        id=f"{source}:v",
+        source=source,
+        source_listing_id="v",
+        model="model_y",
+        country="DE",
+        url="https://example.test/v",
+        title_raw=title,
+        variant=variant,
+    )
+
+
+def test_the_export_re_reads_a_trim_the_ad_spells_out():
+    """23 cars whose ads say "Long Range RWD" in plain words sat in the
+    long_range_awd bucket, stored before the single-motor bucket existed -
+    priced against the dual-motor baseline and reading as bargains they are
+    not, while the Long Range RWD chip stood at zero."""
+    stale = _listing_row(source="autoscout24", title="Long Range RWD 75 kWh", variant="long_range_awd")
+    assert cli.best_variant(stale) == "long_range_rwd"
+
+
+def test_the_export_leaves_a_trim_the_title_cannot_know():
+    """Tesla.com is the one source whose trim never appears in the title: it
+    arrives as a code beside the bare headline "Tesla Model Y"."""
+    coded = _listing_row(source="tesla", title="Tesla Model Y", variant="long_range_awd")
+    assert cli.best_variant(coded) == "long_range_awd"
+
+
+def test_the_export_leaves_a_titleless_row_alone():
+    assert cli.best_variant(_listing_row(source="tesla", title=None, variant="rwd")) == "rwd"

@@ -27,6 +27,7 @@ from car_tracker.normalize.currency import EUR, market_currency, to_eur
 from car_tracker.normalize.features import has_fsd
 from car_tracker.normalize.registration import plausible_registration
 from car_tracker.normalize.title import ensure_title
+from car_tracker.normalize.variant import OTHER as VARIANT_OTHER
 from car_tracker.normalize.variant import normalize_variant
 from car_tracker.sources.autoscout24 import COUNTRY_CODES as AUTOSCOUT24_COUNTRIES
 from car_tracker.sources.autoscout24 import AutoScout24Source
@@ -487,6 +488,33 @@ def _retire_unseen(
     return retired
 
 
+def best_variant(listing: Listing) -> str | None:
+    """The trim, re-read from the ad's own words when they say more.
+
+    `variant` is derived when a row is written, so it keeps whatever this
+    project could work out on the day the car was first seen. When the
+    vocabulary grows, every row already stored keeps the old answer until
+    its site serves it again - and for the two sources datacenter traffic
+    cannot reach, that wait is however long it is until someone runs
+    scrape-local by hand.
+
+    It is not a cosmetic gap. 23 cars whose ads say "Long Range RWD" in
+    plain words sat in the long_range_awd bucket, because the separate
+    single-motor bucket was added after they were stored: each one was
+    then priced against the dual-motor baseline and read as a bargain it
+    is not, and the Long Range RWD filter chip stood at zero.
+
+    Preferred, not substituted, because Tesla.com is the one source whose
+    trim does not appear in the title - it arrives as a code ("LR_AWD")
+    beside the bare headline "Tesla Model Y". A title with nothing to say
+    must leave the stored answer alone.
+    """
+    from_title = normalize_variant(listing.title_raw)
+    if from_title is None or from_title == VARIANT_OTHER:
+        return listing.variant
+    return from_title
+
+
 def cmd_export(args: argparse.Namespace) -> None:
     """Dump the DB to a static JSON file the frontend can fetch directly.
 
@@ -528,7 +556,7 @@ def cmd_export(args: argparse.Namespace) -> None:
                     "source": listing.source,
                     "model": listing.model,
                     "chassisGen": listing.chassis_gen,
-                    "variant": listing.variant,
+                    "variant": best_variant(listing),
                     "country": listing.country,
                     "modelYear": listing.model_year,
                     "firstRegistration": listing.first_registration.isoformat() if listing.first_registration else None,

@@ -61,3 +61,42 @@ def test_long_range_with_an_rwd_signal_is_its_own_bucket(title):
 )
 def test_the_new_bucket_never_steals_from_the_old_ones(title, expected):
     assert normalize_variant(title) == expected
+
+
+# --- spellings sellers actually use ----------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "LongRange AWD | AHK | SoH 94%",       # no space
+        "Long-Range AWD 351pk 75 kWh",         # hyphen
+        "Long R. AWD*GARANTIE*",               # abbreviated
+        "LR 79KW",                             # the bare Tesla abbreviation
+        "Dual Maximale Reichweite Dual AWD",   # German for Long Range
+        "LONGRANGE DUAL-MOTOR NAVI/LED",
+    ],
+)
+def test_the_long_range_spellings_sellers_actually_write(text):
+    assert normalize_variant(text) == "long_range_awd"
+
+
+def test_an_abbreviated_performance_is_still_performance():
+    assert normalize_variant("Perf.*AHV*GARANTIE*") == "performance"
+
+
+def test_an_abbreviated_long_range_rwd_keeps_its_own_bucket():
+    """Placed as plain `rwd` before "Long R." was vocabulary, which prices a
+    Long Range against the cheaper Standard Range baseline."""
+    assert normalize_variant("Long R. RWD 75 kWh | FSD |") == "long_range_rwd"
+
+
+def test_dual_motor_alone_is_not_a_long_range_claim():
+    """Performance is dual-motor AWD too, so this is genuinely ambiguous -
+    the catch-all is the honest answer, not a guess."""
+    assert normalize_variant("Dual AWD ACC|Navi|Klima") == "other"
+    assert normalize_variant("Model Y Allradantrieb") == "other"
+
+
+def test_lr_does_not_fire_from_inside_a_word():
+    assert normalize_variant("Blri Modell") == "other"
