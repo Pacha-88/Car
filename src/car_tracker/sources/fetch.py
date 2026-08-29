@@ -490,6 +490,19 @@ def fetch_html(url: str, *, accept_language: str = "en-US,en;q=0.9", timeout: fl
         status, body = attempt
         if not looks_unusable(status, body):
             return body
+        if status in _RETRYABLE_STATUS:
+            # A rate limit that outlasted the paced retries. Do NOT escalate
+            # to a browser: it leaves from the same address, so it cannot
+            # out-wait a limiter - and a headless browser opening a bare,
+            # bot-defended API URL is exactly what an attacker looks like,
+            # which is how a temporary "slow down" gets extended. A live run
+            # from the owner's home proved the sequence: impersonation 429,
+            # then the escalated browser handed a hard Akamai 403.
+            raise FetchError(
+                f"{url}: HTTP {status} - the site is rate limiting this address right now. "
+                "A browser cannot help (same address) and hammering extends the limit. "
+                "Wait an hour or two, then run again."
+            )
         first_failure = describe(status, body)
     else:
         first_failure = "curl_cffi unavailable"

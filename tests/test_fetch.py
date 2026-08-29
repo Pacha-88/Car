@@ -517,3 +517,35 @@ def test_a_borrowed_browser_is_not_patched_behind_its_owners_back(monkeypatch):
 
     fetch._shared_context(headed=True)
     assert scripts == [], "nothing gets injected into a context we only borrowed"
+
+
+def test_a_persistent_rate_limit_never_escalates_to_the_browser(monkeypatch):
+    """From a real home run: Tesla answered 429 (a limiter, not a block),
+    the code escalated to the browser anyway, and Akamai handed the
+    headless browser a hard 403 - a bot-defended API URL opened by a
+    headless browser is what an attacker looks like, which is how a
+    temporary "slow down" gets extended. The browser leaves from the same
+    address, so it can never out-wait a limiter: stop, say so, name the
+    wait."""
+    monkeypatch.setattr(fetch, "_fetch_with_impersonation", lambda url, **kw: (429, '{"error":"too many"}'))
+    monkeypatch.setattr(
+        fetch,
+        "_fetch_with_browser",
+        lambda url, **kw: (_ for _ in ()).throw(AssertionError("the browser must not be launched for a 429")),
+    )
+
+    with pytest.raises(fetch.FetchError) as caught:
+        fetch.fetch_html("https://www.tesla.com/inventory/api/v4/x")
+
+    message = str(caught.value)
+    assert "rate limiting" in message
+    assert "Wait" in message
+
+
+def test_a_hard_403_still_escalates_to_the_browser(monkeypatch):
+    """The other verdicts keep the ladder: a fingerprint block is exactly
+    what the real browser exists to get past."""
+    monkeypatch.setattr(fetch, "_fetch_with_impersonation", lambda url, **kw: (403, "Access Denied"))
+    monkeypatch.setattr(fetch, "_fetch_with_browser", lambda url, **kw: (200, LISTINGS_HTML))
+
+    assert fetch.fetch_html("https://example.com/x") == LISTINGS_HTML
