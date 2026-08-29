@@ -18,6 +18,7 @@ interface DepreciationModuleProps {
 const VARIANT_TABS: { key: Variant | "all"; label: string }[] = [
   { key: "all", label: "All variants" },
   { key: "long_range_awd", label: VARIANT_LABELS.long_range_awd },
+  { key: "long_range_rwd", label: VARIANT_LABELS.long_range_rwd },
   { key: "rwd", label: VARIANT_LABELS.rwd },
   { key: "performance", label: VARIANT_LABELS.performance },
 ];

@@ -26,3 +26,38 @@ from car_tracker.normalize.variant import normalize_variant
 )
 def test_normalize_variant(text, expected):
     assert normalize_variant(text) == expected
+
+
+# --- Long Range RWD: a real trim, not a parsing accident ------------------
+# 22 of the first 621 real listings were the single-motor Long Range Model Y,
+# and every one was bucketed long_range_awd - reading as a below-market
+# "deal" against the pricier AWD baseline.
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Long Range RWD PANO/LED/KAM/AUTOPILOT",
+        "Long Range RWD",
+        "Premium Long Range RWD 78.1 kWh * FSD * SFEER * EY",
+        "Long-Range Rear-Wheel Drive",
+        "RWD Long Range 650km WLTP",
+    ],
+)
+def test_long_range_with_an_rwd_signal_is_its_own_bucket(title):
+    assert normalize_variant(title) == "long_range_rwd"
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        ("Long Range Dual Motor AWD", "long_range_awd"),  # AWD is right there
+        ("Long Range AWD *20-Zoll*", "long_range_awd"),
+        ("Long Range Allrad", "long_range_awd"),
+        ("Long Range", "long_range_awd"),  # ambiguous -> the common case
+        ("Standard Range RWD *1. Hand*", "rwd"),  # no long range at all
+        ("LR_RWD", "long_range_rwd"),  # Tesla's code style, sibling of LR_AWD
+    ],
+)
+def test_the_new_bucket_never_steals_from_the_old_ones(title, expected):
+    assert normalize_variant(title) == expected

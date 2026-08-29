@@ -843,3 +843,76 @@ def test_a_rescrape_clears_a_registration_date_that_cannot_be_true(isolated_db, 
         listing = session.get(Listing, "fake_ok:model_y-DE")
         assert listing.first_registration is None
         assert listing.model_year is None
+
+
+def _ecb_down():
+    raise RuntimeError("ecb.europa.eu timed out")
+
+
+class _FakeHufSource(Source):
+    """A Hungarian listing priced in forints - needs a HUF rate to store."""
+
+    name = "fake_hu"
+
+    def __enter__(self) -> "_FakeHufSource":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        return None
+
+    def fetch_listings(self, *, model: str, country: str, max_pages: int | None = None) -> list[RawListing]:
+        return [
+            RawListing(
+                source="fake_hu",
+                source_listing_id=f"{model}-{country}",
+                model=model,
+                country=country,
+                url="https://example.hu/1",
+                price_original=14_500_000,
+                currency_original="HUF",
+            )
+        ]
+
+
+def test_ecb_downtime_falls_back_to_the_stored_rates(isolated_db, monkeypatch, capsys):
+    """One ECB timeout used to kill the entire nightly run before a single
+    car was fetched - even though the fx_rates table already held the last
+    run's numbers, and daily reference rates move fractions of a percent."""
+    cli._store_rates(date(2026, 8, 28), {"HUF": 0.0027413})
+
+    monkeypatch.setattr(cli, "fetch_latest_rates", _ecb_down)
+    monkeypatch.setattr(cli, "SOURCES", {"fake_hu": _FakeHufSource})
+    monkeypatch.setattr(cli, "SCRAPE_TARGETS", {"fake_hu": {"models": ["model_y"], "countries": ["HU"]}})
+
+    cli.cmd_scrape_all(argparse.Namespace(max_pages=None, include_blocked=True))  # must not raise
+
+    assert "using stored rates from 2026-08-28" in capsys.readouterr().out
+    with session_scope(get_engine(isolated_db)) as session:
+        snap = session.execute(select(ListingSnapshot)).scalars().one()
+        assert snap.price_eur == pytest.approx(14_500_000 * 0.0027413)
+
+
+def test_ecb_downtime_with_no_stored_rates_still_scrapes_the_eur_markets(isolated_db, monkeypatch):
+    """Nearly every listing is EUR-priced and needs no rate at all. The one
+    combo that genuinely cannot convert fails inside its own try - marked
+    failed, exempt from retirement - instead of taking the run with it."""
+    monkeypatch.setattr(cli, "fetch_latest_rates", _ecb_down)
+    monkeypatch.setattr(cli, "SOURCES", {"fake_ok": _FakeOkSource, "fake_hu": _FakeHufSource})
+    monkeypatch.setattr(
+        cli,
+        "SCRAPE_TARGETS",
+        {
+            "fake_ok": {"models": ["model_y"], "countries": ["DE"]},
+            "fake_hu": {"models": ["model_y"], "countries": ["HU"]},
+        },
+    )
+    _seed_one_listing(isolated_db, source="fake_hu", seen_at=utc_now() - timedelta(days=1))
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.cmd_scrape_all(argparse.Namespace(max_pages=None, include_blocked=True))
+
+    assert "fake_hu/model_y/HU" in str(exc_info.value)
+    with session_scope(get_engine(isolated_db)) as session:
+        stored = {listing.id for listing in session.execute(select(Listing)).scalars()}
+    assert "fake_ok:model_y-DE" in stored, "the EUR market must still have been scraped and stored"
+    assert _is_active(isolated_db, "fake_hu:old") is True, "the failed HUF source retires nothing"

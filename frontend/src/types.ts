@@ -1,6 +1,6 @@
 export type Model = "model_y" | "model_3";
 export type ChassisGen = "legacy" | "highland" | "juniper" | null;
-export type Variant = "long_range_awd" | "performance" | "rwd" | "other" | null;
+export type Variant = "long_range_awd" | "long_range_rwd" | "performance" | "rwd" | "other" | null;
 export type SellerType = "dealer" | "private" | "tesla" | null;
 
 export interface Listing {
@@ -54,6 +54,7 @@ export const SOURCE_COLOR_VAR: Record<string, string> = {
 
 export const VARIANT_LABELS: Record<string, string> = {
   long_range_awd: "Long Range AWD",
+  long_range_rwd: "Long Range RWD",
   performance: "Performance",
   rwd: "RWD",
   other: "Other",

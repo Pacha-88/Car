@@ -126,18 +126,23 @@ def _run_scrape(targets: dict[str, dict[str, list[str]]], *, max_pages: int | No
     Shared by `scrape-all` and `scrape-local`, which differ only in which
     sources they cover and therefore which ones they may retire.
     """
-    rate_date, ecb_rates = fetch_latest_rates()
+    rate_date, ecb_rates, rates_from = _resolve_rates()
     rates_to_eur = {EUR: 1.0, **ecb_rates}
-    print(f"fx rates as of {rate_date} (HUF={rates_to_eur.get('HUF')})")
-    try:
-        _store_rates(rate_date, ecb_rates)
-    except Exception as exc:  # noqa: BLE001
-        # Belt and braces behind the retry above. This run already holds the
-        # rates it needs in memory; storing them only lets the *export*
-        # convert to forints later. Losing that is one number on the
-        # dashboard falling back to euros - not a reason to throw away a
-        # whole morning's prices before a single car has been fetched.
-        print(f"warning: could not store fx rates ({type(exc).__name__}: {exc}) - scraping anyway")
+    if rates_from == "live":
+        print(f"fx rates as of {rate_date} (HUF={rates_to_eur.get('HUF')})")
+        try:
+            _store_rates(rate_date, ecb_rates)
+        except Exception as exc:  # noqa: BLE001
+            # Belt and braces behind the retry above. This run already holds
+            # the rates it needs in memory; storing them only lets the
+            # *export* convert to forints later. Losing that is one number
+            # on the dashboard falling back to euros - not a reason to throw
+            # away a whole morning's prices before a single car is fetched.
+            print(f"warning: could not store fx rates ({type(exc).__name__}: {exc}) - scraping anyway")
+    elif rates_from == "stored":
+        print(f"warning: ECB unreachable - using stored rates from {rate_date} (HUF={rates_to_eur.get('HUF')})")
+    else:
+        print("warning: ECB unreachable and no stored rates - EUR-priced listings only this run")
 
     now = utc_now()
     total_stored = 0
@@ -220,6 +225,37 @@ def _run_scrape(targets: dict[str, dict[str, list[str]]], *, max_pages: int | No
         print(f"partial combos: {', '.join(partials)}")
     if failures:
         raise SystemExit(f"failed combos: {', '.join(failures)}")
+
+
+def _resolve_rates() -> tuple[date | None, dict[str, float], str]:
+    """Today's rates if the ECB answers, yesterday's stored ones if not.
+
+    fetch_latest_rates() used to sit unguarded at the top of _run_scrape,
+    which made one ECB timeout kill the entire nightly run before a single
+    car was fetched - even though nearly every listing is EUR-priced and
+    needs no rate at all, and the fx_rates table already holds the last
+    run's numbers (daily reference rates move fractions of a percent, so
+    yesterday's rate is a fine way to price a used car).
+
+    Last resort is no rates at all: EUR listings convert trivially, and a
+    non-EUR combo then fails inside its own try in the scrape loop - which
+    marks that source failed and, crucially, exempts it from retirement,
+    exactly as if the site itself had been down.
+    """
+    try:
+        rate_date, ecb_rates = fetch_latest_rates()
+        return rate_date, ecb_rates, "live"
+    except Exception:  # noqa: BLE001 - any fetch failure means "try the stored ones"
+        pass
+    try:
+        with session_scope() as session:
+            latest = session.execute(select(func.max(FxRate.rate_date))).scalar()
+            if latest is not None:
+                rows = session.execute(select(FxRate).where(FxRate.rate_date == latest)).scalars()
+                return latest, {row.currency: row.rate_to_eur for row in rows}, "stored"
+    except Exception:  # noqa: BLE001 - a DB hiccup here must not outrank the scrape itself
+        pass
+    return None, {}, "none"
 
 
 def _store_rates(rate_date: date, rates_to_eur: dict[str, float]) -> None:

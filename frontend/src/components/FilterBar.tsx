@@ -92,7 +92,7 @@ export function FilterBar({ filters, onChange, modelListings, newCount, watchlis
       {/* Row 2: variant / chassis / colour */}
       <div className="flex flex-wrap items-start gap-x-6 gap-y-2">
         <FilterGroup label="Variant">
-          {(["long_range_awd", "performance", "rwd", "other"] as const).map((v) => (
+          {(["long_range_awd", "long_range_rwd", "performance", "rwd", "other"] as const).map((v) => (
             <Chip
               key={v}
               label={VARIANT_LABELS[v]}

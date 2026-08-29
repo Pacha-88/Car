@@ -58,7 +58,10 @@ export function defaultFilterState(listings: Listing[], model: Model): FilterSta
     countries: new Set([...NAMED_COUNTRIES, REST_OF_EU]),
     sources: new Set(Object.keys(SOURCE_KEYS)),
     sellerTypes: new Set(["dealer", "private"]),
-    variants: new Set(["long_range_awd", "performance", "rwd", "other"]),
+    // Every key normalize_variant can produce. A bucket missing here is not
+    // "unfiltered" - the filter check treats absence as deselected, so its
+    // listings silently vanish from every view.
+    variants: new Set(["long_range_awd", "long_range_rwd", "performance", "rwd", "other"]),
     chassisGens: new Set(["legacy", "highland", "juniper", "unknown"]),
     colors: new Set(),
     ...bounds,

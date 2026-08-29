@@ -23,24 +23,30 @@ earlier fixed-priority version of this function checked for "performance"
 unconditionally first and misclassified it. Real ad titles put the actual
 trim near the start, so whichever keyword appears earliest is trusted.
 
-Known gap: a handful of markets/years sold a "Long Range RWD" variant, which
-this still buckets as "long_range_awd" whenever "long range" appears before
-any RWD-signalling phrase, since AWD is by far the common case — will
-misclassify that specific combination if it shows up in real data.
+"Long Range RWD" is its own bucket, not a guess between the two: it showed
+up 22 times in the first 621 real listings (it is the current single-motor
+Long Range Model Y in the EU), and bucketing those as long_range_awd made
+every one of them read as a below-market "deal" against the pricier AWD
+baseline. The rule: both a "long range" and an RWD signal present, with no
+AWD signal anywhere in the text ("Long Range Dual Motor AWD" keeps its AWD
+bucket because "AWD" is right there).
 """
 
 from __future__ import annotations
 
 LONG_RANGE_AWD = "long_range_awd"
+LONG_RANGE_RWD = "long_range_rwd"
 PERFORMANCE = "performance"
 RWD = "rwd"
 OTHER = "other"
 
 _EXACT_CODES = {
     "lr_awd": LONG_RANGE_AWD,
+    "lr_rwd": LONG_RANGE_RWD,  # unconfirmed in a live Tesla sample, but the obvious sibling of lr_awd
     "rwd": RWD,
 }
-_RWD_PHRASES = ("rwd", "rear-wheel drive", "standard range")
+_RWD_PHRASES = ("rwd", "rear wheel drive", "standard range")
+_AWD_SIGNALS = ("awd", "allrad", "dual motor", "4x4", "4wd")
 
 
 def normalize_variant(text: str | None) -> str | None:
@@ -49,6 +55,11 @@ def normalize_variant(text: str | None) -> str | None:
     lowered = text.lower().strip()
     if lowered in _EXACT_CODES:
         return _EXACT_CODES[lowered]
+    # Sellers hyphenate freely - "Long-Range", "Rear-Wheel Drive" - and a
+    # hyphen defeated the phrase match: a real "Long-Range Dual Motor
+    # Performance AWD" fell through "long range" entirely. One separator
+    # style before matching.
+    lowered = lowered.replace("-", " ")
 
     matches: list[tuple[int, str]] = []
     performance_idx = lowered.find("performance")
@@ -65,4 +76,15 @@ def normalize_variant(text: str | None) -> str | None:
 
     if not matches:
         return OTHER
-    return min(matches, key=lambda pair: pair[0])[1]
+    winner = min(matches, key=lambda pair: pair[0])[1]
+    # "Long Range" + an RWD signal, and nothing anywhere saying AWD: that is
+    # the single-motor Long Range, a distinct trim with its own price level,
+    # not a Long Range AWD with noise after it.
+    if (
+        winner in (LONG_RANGE_AWD, RWD)
+        and long_range_idx != -1
+        and any(kind == RWD for _, kind in matches)
+        and not any(signal in lowered for signal in _AWD_SIGNALS)
+    ):
+        return LONG_RANGE_RWD
+    return winner
