@@ -77,3 +77,67 @@ def test_a_slug_with_no_colour_ends_in_the_fuel_word():
 @pytest.mark.parametrize("url", ["", "/offers/nothing-like-a-listing", "https://example.com/x"])
 def test_an_unrecognisable_url_yields_no_colour(url):
     assert color_from_autoscout24_url(url) is None
+
+
+# --- German and Hungarian ad headlines ------------------------------------
+# Two of the four sources have no colour field at all: Kleinanzeigen and
+# Használtautó carry only the seller's own headline. English-only, that
+# meant every car from either of them was colourless - and once Hungary
+# scraped properly, about half the dashboard sat in "Unknown".
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        # German, including the adjective endings and the compound shades
+        # that car ads are actually written in.
+        ("Performance Dual AWD*LEDER/Weiss*21Zoll*", "white"),
+        ("ModelY LongRange Dual AWD Schwarz Schwarz Steuer", "black"),
+        ("Model 3 schwarzer Innenraum", "black"),
+        ("Model Y rote Bremssättel", "red"),
+        ("Model 3 dunkelblau metallic", "blue"),
+        ("Model Y tiefschwarz", "black"),
+        ("Model Y hellgrau", "grey"),
+        ("Model 3 perlweiss", "white"),
+        ("Tesla Model Y Performance Silber", "silver"),
+        # Hungarian
+        ("Tesla Model Y fehér", "white"),
+        ("MODEL 3 fekete, garanciával", "black"),
+        ("Model Y szürke metál", "grey"),
+        ("MODEL 3 kék", "blue"),
+        ("Model Y ezüst színben", "silver"),
+        ("Model 3 vörös", "red"),
+        ("Model Y sötétkék", "blue"),
+        ("Model 3 világosszürke", "grey"),
+    ],
+)
+def test_reads_a_colour_out_of_a_german_or_hungarian_headline(title, expected):
+    assert normalize_color(title) == expected
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        # The traps. "Gründen" is not green: German stems take adjective
+        # endings only, never any suffix.
+        "Model Y aus Gründen zu verkaufen",
+        "Tesla Model 3 Rotation der Reifen inklusive",
+        # "kerekek" (wheels) ends in a bare "kek", which is why the
+        # Hungarian blue insists on its accent.
+        "Model Y mit vier Kerekek",
+        # Real headlines from the live export that name no colour.
+        "TESLA MODEL Y RWD (Automata) GARANCIA/95%-OS AKKU /LFP/60Kwh!",
+        "TESLA MODEL Y Long Range AWD (Automata) Kerámia bevonat Performance díszítésekkel",
+        "Model Y Long Range AWD Autopilot",
+        "Tesla Model 3 Standard Range Plus Bj 2021",
+    ],
+)
+def test_does_not_invent_a_colour(title):
+    assert normalize_color(title) is None
+
+
+def test_english_still_wins_over_another_language_s_spelling():
+    """Tesla paint codes and AutoScout24 slugs must not be re-read."""
+    assert normalize_color("PEARL_WHITE_MULTI_COAT") == "white"
+    assert normalize_color("MIDNIGHT_SILVER") == "silver"
+    assert normalize_color("quicksilver") == "silver"

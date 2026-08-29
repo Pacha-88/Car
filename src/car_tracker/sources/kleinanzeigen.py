@@ -33,6 +33,7 @@ from datetime import date
 
 import httpx
 
+from car_tracker.normalize.color import normalize_color
 from car_tracker.sources.base import PartialResults, RawListing, Source
 from car_tracker.sources.http import build_client
 
@@ -167,6 +168,11 @@ def parse_item(article_html: str, *, model: str) -> RawListing | None:
         # central normalize_variant() call as every other source.
         variant=title_text,
         title_raw=title_text,
+        # No colour field on this site either - the seller's own headline is
+        # all there is, and normalize_color reads German. Title only, not
+        # the description: "weiß" is also the verb "to know", and a wrong
+        # colour on a colour filter is worse than none.
+        color=normalize_color(title_text),
         photo_urls=[image.group(1)] if image else [],
         seller_type="dealer" if "badge-hint-pro-small-srp" in article_html else "private",
         location=_LEADING_ZIP_RE.sub("", location.group(1).strip()) if location else None,

@@ -49,6 +49,67 @@ BASE_COLORS = (
 
 _ALIASES = {"gray": "grey", "violet": "purple"}
 
+# The other two sources have no colour field at all - only the ad's own
+# headline, written by a German or a Hungarian seller. Left English-only,
+# every Kleinanzeigen and every Használtautó car came out colourless, and
+# once Hungary was scraping properly that was about half the dashboard
+# sitting in "Unknown".
+#
+# Stems, not whole words, because both languages inflect them - "schwarzer
+# Tesla", "fehérre fóliázva". German takes the adjective endings only
+# (\w* would read "aus Gründen" as green); Hungarian's suffixes are too
+# many to list, so it takes any, which is safe because its colour words are
+# not prefixes of common car-ad vocabulary.
+_GERMAN_ENDINGS = r"(?:e|es|er|em|en|ne|nes|ner|nem|nen)?"
+_GERMAN_COLORS = {
+    "wei(?:ss|ß)": "white",
+    "schwarz": "black",
+    "silber": "silver",
+    "grau": "grey",
+    "blau": "blue",
+    "rot": "red",
+    "gr(?:ü|ue)n": "green",
+    "braun": "brown",
+    "beige": "beige",
+    "gelb": "yellow",
+    "orange": "orange",
+    "gold": "gold",
+    "bronze": "bronze",
+    "lila": "purple",
+    "violett": "purple",
+}
+_HUNGARIAN_COLORS = {
+    "feh(?:é|e)r": "white",
+    "fekete": "black",
+    "ez(?:ü|u)st": "silver",
+    "sz(?:ü|u)rke": "grey",
+    # Accent required here, unlike the longer stems: bare "kek" sits inside
+    # ordinary Hungarian plurals ("kerekek" - wheels), and reading a set of
+    # wheels as a blue car is exactly the kind of invention this module
+    # exists to avoid.
+    "kék": "blue",
+    "piros": "red",
+    "v(?:ö|o)r(?:ö|o)s": "red",
+    "z(?:ö|o)ld": "green",
+    "barna": "brown",
+    "b(?:é|e)zs": "beige",
+    "s(?:á|a)rga": "yellow",
+    "narancs": "orange",
+    "arany": "gold",
+    "bronz": "bronze",
+    "lila": "purple",
+}
+
+# A leading \w*? because both languages build shades as one word -
+# "dunkelblau", "tiefschwarz", "sötétkék", "világosszürke". Safe in this
+# direction: a compound ENDING in a colour word is a colour. The danger is
+# all on the other side, which is what the bounded German endings guard.
+_LOCALISED = [
+    *((rf"\b\w*?{stem}{_GERMAN_ENDINGS}\b", colour) for stem, colour in _GERMAN_COLORS.items()),
+    *((rf"\b\w*?{stem}\w*", colour) for stem, colour in _HUNGARIAN_COLORS.items()),
+]
+_LOCALISED_RES = [(re.compile(pattern), colour) for pattern, colour in _LOCALISED]
+
 # Paint names that spell a colour without a word boundary to find it by.
 # Matching on bare substrings instead would be worse than missing these:
 # "red" alone is inside plenty of words that are not colours. Extend this
@@ -66,7 +127,16 @@ def normalize_color(raw: str | None) -> str | None:
     for base in BASE_COLORS:
         if re.search(rf"\b{base}\b", text):
             return _ALIASES.get(base, base)
-    return None
+    # English first so a paint code or an AutoScout24 slug is never read
+    # through another language's spelling.
+    earliest: tuple[int, str] | None = None
+    for pattern, colour in _LOCALISED_RES:
+        match = pattern.search(text)
+        # Leftmost wins, the same rule normalize_variant uses: an ad titles
+        # the car it is selling first and mentions everything else after.
+        if match and (earliest is None or match.start() < earliest[0]):
+            earliest = (match.start(), colour)
+    return earliest[1] if earliest else None
 
 
 _URL_TAIL_RE = re.compile(r"-([a-z0-9]+)-cat_ma\d+mo\d+-")

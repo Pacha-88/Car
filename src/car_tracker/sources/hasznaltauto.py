@@ -42,6 +42,7 @@ from html import unescape
 
 import httpx
 
+from car_tracker.normalize.color import normalize_color
 from car_tracker.normalize.currency import market_currency
 from car_tracker.sources.base import PartialResults, RawListing, Source
 from car_tracker.sources.fetch import fetch_html, save_for_diagnosis
@@ -347,6 +348,9 @@ def parse_item(chunk: str, *, model: str) -> RawListing | None:
         # title feeds the shared central normalize_variant() call.
         variant=title_text,
         title_raw=title_text,
+        # Same as Kleinanzeigen: the search row carries no colour field, so
+        # the ad's own headline is the only place one can come from.
+        color=normalize_color(title_text),
         photo_urls=[image_match.group(1)] if image_match else [],
         seller_type=_normalize_seller(seller_match.group(1)) if seller_match else None,
         location=None,  # not present in search-result markup, see module docstring
