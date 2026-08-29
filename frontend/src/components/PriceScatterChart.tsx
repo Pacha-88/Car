@@ -9,7 +9,7 @@ import {
   YAxis,
 } from "recharts";
 import { binnedMedianTrend } from "../lib/trend";
-import { yearColor, yearLegendEntries } from "../lib/colors";
+import { isOlderBucket, yearColor, yearLegendEntries } from "../lib/colors";
 import type { DealInfo } from "../lib/dealScore";
 import { formatKm, formatYearMonth } from "../lib/format";
 import { useMoney } from "../lib/moneyContext";
@@ -22,6 +22,8 @@ interface ScatterPoint {
   priceEur: number;
   year: number;
   color: string;
+  /** Drawn as a hollow ring - see isOlderBucket for why colour alone won't do. */
+  older: boolean;
   listing: Listing;
 }
 
@@ -55,7 +57,7 @@ export function PriceScatterChart({
       }))
       .filter((p) => p.year > 0);
     const maxYear = withYear.length ? Math.max(...withYear.map((p) => p.year)) : new Date().getFullYear();
-    return withYear.map((p) => ({ ...p, color: yearColor(p.year, maxYear) }));
+    return withYear.map((p) => ({ ...p, color: yearColor(p.year, maxYear), older: isOlderBucket(p.year, maxYear) }));
   }, [listings]);
 
   const years = useMemo(() => [...new Set(points.map((p) => p.year))].sort(), [points]);
@@ -184,8 +186,8 @@ export function PriceScatterChart({
                     cx={p.cx}
                     cy={p.cy}
                     r={DOT_RADIUS}
-                    fill={p.payload.color}
-                    stroke="var(--surface-1)"
+                    fill={p.payload.older ? "none" : p.payload.color}
+                    stroke={p.payload.older ? p.payload.color : "var(--surface-1)"}
                     strokeWidth={2}
                   />
                 </g>
@@ -228,7 +230,16 @@ function YearLegend({ years, maxYear }: { years: number[]; maxYear: number }) {
       <div className="flex items-center gap-1.5">
         {entries.map((e) => (
           <span key={e.label} className="flex items-center gap-1 text-secondary">
-            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: e.color }} />
+            {/* The swatch mirrors the mark, so the legend teaches the
+                hollow-ring encoding rather than leaving it a mystery. */}
+            <span
+              className="h-2.5 w-2.5 rounded-full"
+              style={
+                e.older
+                  ? { border: `2px solid ${e.color}` }
+                  : { backgroundColor: e.color }
+              }
+            />
             {e.label}
           </span>
         ))}

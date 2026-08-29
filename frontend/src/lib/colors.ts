@@ -14,6 +14,20 @@
 
 export const DISTINCT_YEAR_SLOTS = 5;
 
+/** Whether a year falls in the lumped "everything older" bucket.
+ *
+ * That bucket is drawn as a hollow ring rather than a filled dot, and this
+ * is what decides. Colour alone could not carry it: run the dataviz
+ * validator over the five year hues plus a neutral with `--pairs all` -
+ * which is the right pairlist for a scatter, since any two colours can
+ * land side by side - and the neutral is ΔE 5.2 from the green under
+ * protanopia and 13.3 under normal vision, against floors of 8 and 15. No
+ * neutral inside the palette's lightness band clears them, because a grey
+ * has no hue to be separated on. Shape does, for every kind of vision. */
+export function isOlderBucket(year: number, maxYear: number): boolean {
+  return maxYear - year >= DISTINCT_YEAR_SLOTS;
+}
+
 export function yearColor(year: number, maxYear: number): string {
   const age = maxYear - year;
   if (age < 0) return "var(--year-5)"; // future-dated listing: treat as newest
@@ -23,13 +37,13 @@ export function yearColor(year: number, maxYear: number): string {
 
 /** Legend entries for the years present, oldest first. Years older than
  * the five distinct slots collapse into one "<= year" entry. */
-export function yearLegendEntries(years: number[], maxYear: number): { label: string; color: string }[] {
+export function yearLegendEntries(years: number[], maxYear: number): { label: string; color: string; older: boolean }[] {
   const distinct = years.filter((y) => maxYear - y < DISTINCT_YEAR_SLOTS).sort((a, b) => a - b);
   const hasOlder = years.some((y) => maxYear - y >= DISTINCT_YEAR_SLOTS);
-  const entries: { label: string; color: string }[] = [];
+  const entries: { label: string; color: string; older: boolean }[] = [];
   if (hasOlder) {
-    entries.push({ label: `≤ ${maxYear - DISTINCT_YEAR_SLOTS}`, color: "var(--year-older)" });
+    entries.push({ label: `≤ ${maxYear - DISTINCT_YEAR_SLOTS}`, color: "var(--year-older)", older: true });
   }
-  for (const y of distinct) entries.push({ label: String(y), color: yearColor(y, maxYear) });
+  for (const y of distinct) entries.push({ label: String(y), color: yearColor(y, maxYear), older: false });
   return entries;
 }
