@@ -494,7 +494,7 @@ function HoverCard({ point, watchlist, onToggleWatchlist, dealScores }: HoverCar
         <div className="mb-2 grid grid-cols-2 gap-2 tabular">
           <div>
             <div className="text-[10px] uppercase text-muted">Price</div>
-            <div className="text-sm font-semibold text-primary">{money.format(listing.priceEur)}</div>
+            <div className="text-sm font-semibold text-primary">{money.formatListing(listing)}</div>
           </div>
           <div>
             <div className="text-[10px] uppercase text-muted">Mileage</div>
@@ -519,7 +519,7 @@ function HoverCard({ point, watchlist, onToggleWatchlist, dealScores }: HoverCar
         <div className="mb-2 text-[11px] text-secondary">
           {listing.daysAtCurrentPrice === 0
             ? "held at this price since today"
-            : `held ${money.format(listing.priceEur)} for ${listing.daysAtCurrentPrice} day${listing.daysAtCurrentPrice === 1 ? "" : "s"}`}
+            : `held ${money.formatListing(listing)} for ${listing.daysAtCurrentPrice} day${listing.daysAtCurrentPrice === 1 ? "" : "s"}`}
         </div>
 
         <div className="flex flex-wrap gap-1">

@@ -7,6 +7,10 @@ export interface Money {
   /** null when no scrape has ever stored a rate — the UI then stays in euros. */
   hufPerEur: number | null;
   format: (eurValue: number) => string;
+  /** One car's asking price. Shows the ad's own number when the ad is
+   * written in the currency being displayed, and the converted euro figure
+   * otherwise. Use this for a listing; `format` for anything derived. */
+  formatListing: (listing: { priceEur: number; priceOriginal?: number | null; currencyOriginal?: string | null }) => string;
   formatSigned: (eurValue: number) => string;
   formatTick: (eurValue: number) => string;
   /** Y-axis width the current currency's ticks need. */

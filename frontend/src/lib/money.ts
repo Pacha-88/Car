@@ -31,6 +31,19 @@ export function formatMoney(eurValue: number, currency: Currency, hufPerEur: num
   return `${whole.format(ft)} Ft`;
 }
 
+/** A price already denominated in `currency` — no conversion, no round trip.
+ *
+ * `formatMoney` takes euros because euros are the unit of record for
+ * everything derived (medians, slopes, the depreciation curve). A single
+ * car's asking price is different: when the ad is written in the currency
+ * being displayed, the honest thing to show is the ad's own number.
+ */
+export function formatAmount(value: number, currency: Currency): string {
+  if (currency === "EUR") return eurFormat.format(value);
+  if (Math.abs(value) >= MILLION) return `${twoDecimals.format(value / MILLION)} millió Ft`;
+  return `${whole.format(value)} Ft`;
+}
+
 /** Same, but a positive number keeps its plus sign — for deltas. */
 export function formatMoneySigned(eurValue: number, currency: Currency, hufPerEur: number | null): string {
   return (eurValue > 0 ? "+" : "") + formatMoney(eurValue, currency, hufPerEur);

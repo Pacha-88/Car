@@ -1,5 +1,12 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { axisWidthFor, formatMoney, formatMoneySigned, formatMoneyTick, type Currency } from "../lib/money";
+import {
+  axisWidthFor,
+  formatAmount,
+  formatMoney,
+  formatMoneySigned,
+  formatMoneyTick,
+  type Currency,
+} from "../lib/money";
 import { MoneyContext, type Money } from "../lib/moneyContext";
 
 const STORAGE_KEY = "car-tracker.currency";
@@ -29,6 +36,10 @@ export function MoneyProvider({ hufPerEur, children }: { hufPerEur: number | nul
       setCurrency: choose,
       hufPerEur,
       format: (v) => formatMoney(v, currency, hufPerEur),
+      formatListing: (listing) =>
+        listing.currencyOriginal === currency && typeof listing.priceOriginal === "number"
+          ? formatAmount(listing.priceOriginal, currency)
+          : formatMoney(listing.priceEur, currency, hufPerEur),
       formatSigned: (v) => formatMoneySigned(v, currency, hufPerEur),
       formatTick: (v) => formatMoneyTick(v, currency, hufPerEur),
       axisWidth: axisWidthFor(currency, hufPerEur),

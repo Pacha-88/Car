@@ -660,6 +660,55 @@ def test_the_export_carries_the_rate_the_run_actually_used(isolated_db, tmp_path
     assert payload["hufPerEur"] == pytest.approx(1 / 0.0027413, rel=1e-3)
 
 
+def test_the_export_carries_the_sellers_own_number_beside_the_euro_one(isolated_db, tmp_path, monkeypatch):
+    """A forint price shown to a Hungarian buyer must be the one on the ad.
+
+    Euros are the unit of record - the market spans six eurozone countries -
+    but that makes a Hungarian car's displayed price a round trip: converted
+    at the rate of the day it was scraped, converted back at the rate of the
+    day it was exported. Those are the same day for the scheduled sources.
+    Használtautó is scraped by hand, so its listings routinely carry a rate
+    days or weeks old, and the card then disagrees with the ad it links to.
+    """
+    monkeypatch.setattr(cli, "fetch_latest_rates", lambda: (date(2026, 8, 28), {"HUF": 0.0027413}))
+
+    class _HungarianSource(_FakeOkSource):
+        def fetch_listings(self, *, model, country, max_pages=None):
+            return [
+                RawListing(
+                    source="fake_hu",
+                    source_listing_id="1",
+                    model=model,
+                    country="HU",
+                    url="https://example.invalid/1",
+                    price_original=10_390_000.0,
+                    currency_original="HUF",
+                    mileage_km=136_000,
+                    model_year=2023,
+                    first_registration=date(2023, 1, 1),
+                    variant="RWD",
+                    title_raw="TESLA MODEL Y RWD",
+                    photo_urls=[],
+                    seller_type="private",
+                    location=None,
+                    power_kw=220,
+                )
+            ]
+
+    monkeypatch.setattr(cli, "SOURCES", {"fake_hu": _HungarianSource})
+    monkeypatch.setattr(cli, "SCRAPE_TARGETS", {"fake_hu": {"models": ["model_y"], "countries": ["HU"]}})
+    cli.cmd_scrape_all(argparse.Namespace(max_pages=None, include_blocked=True))
+
+    out = tmp_path / "listings.json"
+    cli.cmd_export(argparse.Namespace(out=str(out)))
+    listing = json.loads(out.read_text())["listings"][0]
+
+    assert listing["priceOriginal"] == 10_390_000.0
+    assert listing["currencyOriginal"] == "HUF"
+    # And the euro figure is still there for everything derived from it.
+    assert listing["priceEur"] == pytest.approx(10_390_000 * 0.0027413)
+
+
 def test_the_export_says_so_rather_than_guessing_when_no_rate_was_ever_stored(isolated_db, tmp_path):
     """A fresh database has no rate. Inventing one would put wrong forint
     figures on every card; null lets the dashboard stay in euros."""

@@ -231,7 +231,7 @@ function ListingCard({
         <p className="line-clamp-2 text-[11px] font-medium leading-snug text-primary">{listingTitle(listing)}</p>
         <p className="text-[10px] text-muted">{subtitle(listing)}</p>
         <div className="numeral mt-auto flex items-baseline justify-between gap-2 pt-1.5">
-          <span className="text-[15px] font-semibold leading-none text-primary">{money.format(listing.priceEur)}</span>
+          <span className="text-[15px] font-semibold leading-none text-primary">{money.formatListing(listing)}</span>
           <span className="text-[10px] text-muted">{listing.mileageKm !== null ? formatKm(listing.mileageKm) : "—"}</span>
         </div>
         <div className="flex justify-end">
@@ -278,7 +278,7 @@ function ListingRow({
         <span className="shrink-0 rounded-md bg-status-warning px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-black">NEW</span>
       )}
       <div className="numeral shrink-0 text-right">
-        <div className="text-sm font-semibold text-primary">{money.format(listing.priceEur)}</div>
+        <div className="text-sm font-semibold text-primary">{money.formatListing(listing)}</div>
         <div className="text-[10px] text-muted">{listing.mileageKm !== null ? formatKm(listing.mileageKm) : "—"}</div>
         <DealBadge deal={deal} mode="inline" />
       </div>

@@ -531,6 +531,16 @@ def cmd_export(args: argparse.Namespace) -> None:
                     "color": listing.color,
                     "firstSeenAt": listing.first_seen_at.isoformat(),
                     "priceEur": latest.price_eur,
+                    # The seller's own number, in the seller's own currency.
+                    # A forint price shown to a Hungarian buyer has to be the
+                    # one on the ad, and a round trip through euros cannot
+                    # promise that: it is converted at the rate of the day
+                    # the car was scraped and converted back at the rate of
+                    # the day it is exported. Those are the same day for the
+                    # scheduled sources; Használtautó is scraped by hand, so
+                    # its listings can carry a rate days or weeks old.
+                    "priceOriginal": latest.price_original,
+                    "currencyOriginal": latest.currency_original,
                     "mileageKm": latest.mileage_km,
                     "daysAtCurrentPrice": days_at_current_price(snapshots, as_of=now),
                     "isNew": is_new_since_last_scrape(listing.first_seen_at, latest_scrape_date=latest_scrape_date)

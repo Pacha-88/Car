@@ -21,6 +21,10 @@ export interface Listing {
   color: string | null;
   firstSeenAt: string; // ISO datetime
   priceEur: number;
+  /** What the ad itself says, in the currency it says it in. Optional: an
+   * export written before this field existed simply has no original. */
+  priceOriginal?: number | null;
+  currencyOriginal?: string | null;
   mileageKm: number | null;
   daysAtCurrentPrice: number;
   isNew: boolean;
