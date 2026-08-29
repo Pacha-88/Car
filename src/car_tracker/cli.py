@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 
 from car_tracker.analysis.listing_status import days_at_current_price, is_new_since_last_scrape
 from car_tracker.db.models import FxRate, Listing, ListingSnapshot
@@ -17,6 +18,7 @@ from car_tracker.db.session import init_db, session_scope
 from car_tracker.fx.ecb import fetch_latest_rates
 from car_tracker.normalize.chassis import detect_chassis
 from car_tracker.normalize.currency import EUR, market_currency, to_eur
+from car_tracker.normalize.registration import plausible_registration
 from car_tracker.normalize.variant import normalize_variant
 from car_tracker.sources.autoscout24 import COUNTRY_CODES as AUTOSCOUT24_COUNTRIES
 from car_tracker.sources.autoscout24 import AutoScout24Source
@@ -126,7 +128,15 @@ def _run_scrape(targets: dict[str, dict[str, list[str]]], *, max_pages: int | No
     rate_date, ecb_rates = fetch_latest_rates()
     rates_to_eur = {EUR: 1.0, **ecb_rates}
     print(f"fx rates as of {rate_date} (HUF={rates_to_eur.get('HUF')})")
-    _store_rates(rate_date, ecb_rates)
+    try:
+        _store_rates(rate_date, ecb_rates)
+    except Exception as exc:  # noqa: BLE001
+        # Belt and braces behind the retry above. This run already holds the
+        # rates it needs in memory; storing them only lets the *export*
+        # convert to forints later. Losing that is one number on the
+        # dashboard falling back to euros - not a reason to throw away a
+        # whole morning's prices before a single car has been fetched.
+        print(f"warning: could not store fx rates ({type(exc).__name__}: {exc}) - scraping anyway")
 
     now = utc_now()
     total_stored = 0
@@ -218,14 +228,31 @@ def _store_rates(rate_date: date, rates_to_eur: dict[str, float]) -> None:
     minute of ECB downtime would cost the whole dashboard rather than one
     number - and the rates a run *used* are the ones its prices should be
     read back with.
+
+    Two runs write here at once. The scheduled GitHub run and the
+    `scrape-local` cron both aim at the same morning and the same database,
+    and they store the *same* rates under the same (date, currency) key -
+    so "does the row exist yet" answered before either has committed sends
+    both down the insert path and one of them into a duplicate-key error.
+    Measured with the two runs starting together: 11 collisions in 12
+    attempts, which is not a rare race, it is the normal outcome. On the
+    retry every row exists, so it is pure updates and cannot collide again.
     """
-    with session_scope() as session:
-        for currency, rate in rates_to_eur.items():
-            existing = session.get(FxRate, (rate_date, currency))
-            if existing is None:
-                session.add(FxRate(rate_date=rate_date, currency=currency, rate_to_eur=rate))
-            else:
-                existing.rate_to_eur = rate
+    for attempt in (1, 2):
+        try:
+            with session_scope() as session:
+                for currency, rate in rates_to_eur.items():
+                    existing = session.get(FxRate, (rate_date, currency))
+                    if existing is None:
+                        session.add(FxRate(rate_date=rate_date, currency=currency, rate_to_eur=rate))
+                    else:
+                        existing.rate_to_eur = rate
+            return
+        except IntegrityError:
+            if attempt == 2:
+                raise
+            # The other run committed the same ECB numbers between our read
+            # and our write. Nothing is lost - go round once more and update.
 
 
 def _latest_huf_per_eur(session) -> float | None:
@@ -471,8 +498,14 @@ def cmd_export(args: argparse.Namespace) -> None:
 def _upsert(session, raw: RawListing, *, rates_to_eur: dict[str, float], observed_at: datetime) -> None:
     listing_id = f"{raw.source}:{raw.source_listing_id}"
     listing = session.get(Listing, listing_id)
+    # Before anything reads the date: a slipped digit ("12/2002" for a Model
+    # Y) is a normal marketplace typo, and chassis detection, the year
+    # filter and the depreciation curve all take it at face value.
+    first_registration, model_year = plausible_registration(
+        raw.model, first_registration=raw.first_registration, model_year=raw.model_year
+    )
     chassis_gen = detect_chassis(
-        raw.model, first_registration=raw.first_registration, model_year=raw.model_year, title=raw.title_raw
+        raw.model, first_registration=first_registration, model_year=model_year, title=raw.title_raw
     )
     variant = normalize_variant(raw.variant)
 
@@ -485,8 +518,8 @@ def _upsert(session, raw: RawListing, *, rates_to_eur: dict[str, float], observe
             chassis_gen=chassis_gen,
             variant=variant,
             country=raw.country,
-            model_year=raw.model_year,
-            first_registration=raw.first_registration,
+            model_year=model_year,
+            first_registration=first_registration,
             url=raw.url,
             title_raw=raw.title_raw,
             photo_urls=raw.photo_urls,
@@ -521,8 +554,13 @@ def _upsert(session, raw: RawListing, *, rates_to_eur: dict[str, float], observe
         listing.photo_urls = raw.photo_urls or listing.photo_urls
         listing.location = raw.location or listing.location
         listing.url = raw.url or listing.url
-        listing.model_year = raw.model_year or listing.model_year
-        listing.first_registration = raw.first_registration or listing.first_registration
+        # Not `or`: when the source does say something about the date, its
+        # answer wins outright - including "what it gave is not believable",
+        # which has to clear a bad stored value rather than preserve it
+        # forever. Only silence from the source leaves what we already hold.
+        if raw.first_registration is not None or raw.model_year is not None:
+            listing.first_registration = first_registration
+            listing.model_year = model_year
         listing.seller_type = raw.seller_type or listing.seller_type
 
     session.add(

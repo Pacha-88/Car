@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import argparse
 import json
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
 
 from car_tracker import cli
-from car_tracker.db.models import Listing, ListingSnapshot
+from car_tracker.db.models import FxRate, Listing, ListingSnapshot
 from car_tracker.db.session import get_engine, init_db, session_scope
 from car_tracker.sources.base import PartialResults, RawListing, Source
 from car_tracker.timeutil import utc_now
@@ -728,3 +729,117 @@ def test_the_backstop_does_not_fire_on_a_source_that_broke_today(isolated_db, mo
     # 34 seeded + 1 just seen = 35 active; only the 4 week-old ones go.
     assert _active_count(isolated_db, "fake_ok") == 31
     assert "refusing" in capsys.readouterr().out, "and it still says the gap looked wrong"
+
+
+def test_storing_rates_survives_the_other_run_writing_them_first(isolated_db, monkeypatch):
+    """The scheduled GitHub run and the scrape-local cron both aim at the
+    same morning and the same database, and store the *same* ECB numbers
+    under the same (date, currency) key. Asking "does this row exist yet"
+    before either has committed sends both down the insert path, and one
+    into a duplicate-key error. Measured with two runs started together:
+    11 collisions in 12 attempts."""
+    real_scope = cli.session_scope
+    state = {"attempts": 0, "raced": False}
+
+    class _RacingSession:
+        """A session that lets the other run commit *after* our read - which
+        is the only ordering that produces the collision. Committing before
+        it just means we find the row and take the update path."""
+
+        def __init__(self, inner):
+            self._inner = inner
+
+        def get(self, *args, **kwargs):
+            found = self._inner.get(*args, **kwargs)
+            if not state["raced"]:
+                state["raced"] = True
+                with real_scope() as other:  # the other run, committing now
+                    for currency in ("HUF", "USD"):
+                        other.add(FxRate(rate_date=date(2026, 8, 28), currency=currency, rate_to_eur=0.001))
+            return found
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    @contextmanager
+    def racing_scope(*args, **kwargs):
+        state["attempts"] += 1
+        with real_scope(*args, **kwargs) as session:
+            yield _RacingSession(session) if state["attempts"] == 1 else session
+
+    monkeypatch.setattr(cli, "session_scope", racing_scope)
+    cli._store_rates(date(2026, 8, 28), {"HUF": 0.0028, "USD": 0.92})
+    monkeypatch.undo()
+
+    assert state["attempts"] == 2, "the first attempt must have collided and been retried"
+    with session_scope(get_engine(isolated_db)) as session:
+        assert cli._latest_huf_per_eur(session) == pytest.approx(1 / 0.0028, rel=1e-3), (
+            "and the retry must land this run's value, not the one it collided with"
+        )
+
+
+def test_a_run_still_scrapes_when_the_rates_cannot_be_stored(isolated_db, monkeypatch, capsys):
+    """Storing the rates only lets the *export* convert to forints later.
+    Losing that is one number falling back to euros - not a reason to throw
+    away a morning's prices before a single car has been fetched."""
+    monkeypatch.setattr(cli, "fetch_latest_rates", lambda: (date(2026, 8, 28), {"HUF": 0.0025}))
+    monkeypatch.setattr(cli, "_store_rates", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db said no")))
+    monkeypatch.setattr(cli, "SOURCES", {"fake_ok": _FakeOkSource})
+    monkeypatch.setattr(cli, "SCRAPE_TARGETS", {"fake_ok": {"models": ["model_y"], "countries": ["DE"]}})
+
+    cli.cmd_scrape_all(argparse.Namespace(max_pages=None, include_blocked=True))  # must not raise
+
+    output = capsys.readouterr().out
+    assert "could not store fx rates" in output
+    with session_scope(get_engine(isolated_db)) as session:
+        assert session.get(Listing, "fake_ok:model_y-DE") is not None, "the cars still got stored"
+
+
+def test_a_rescrape_clears_a_registration_date_that_cannot_be_true(isolated_db, monkeypatch):
+    """The refresh rule is `or` for most fields so a thin response can't
+    blank good data - but that would also preserve a bad date forever,
+    since the sanitised value is None. When the source does say something
+    about the date, its answer wins, including "not believable"."""
+    with session_scope(get_engine(isolated_db)) as session:
+        session.add(
+            Listing(
+                id="fake_ok:model_y-DE",
+                source="fake_ok",
+                source_listing_id="model_y-DE",
+                model="model_y",
+                country="DE",
+                url="https://example.com/1",
+                model_year=2002,
+                first_registration=date(2002, 12, 1),
+                first_seen_at=utc_now(),
+                last_seen_at=utc_now(),
+                is_active=True,
+            )
+        )
+
+    class _StillSaysTwoThousandTwo(_FakeOkSource):
+        def fetch_listings(self, *, model, country, max_pages=None):
+            return [
+                RawListing(
+                    source="fake_ok",
+                    source_listing_id=f"{model}-{country}",
+                    model=model,
+                    country=country,
+                    url="https://example.com/1",
+                    price_original=30_000,
+                    currency_original="EUR",
+                    model_year=2002,
+                    first_registration=date(2002, 12, 1),
+                )
+            ]
+
+    monkeypatch.setattr(cli, "fetch_latest_rates", lambda: (date(2026, 8, 28), {"HUF": 0.0025}))
+    monkeypatch.setattr(cli, "SOURCES", {"fake_ok": _StillSaysTwoThousandTwo})
+    monkeypatch.setattr(cli, "SCRAPE_TARGETS", {"fake_ok": {"models": ["model_y"], "countries": ["DE"]}})
+
+    cli.cmd_scrape_all(argparse.Namespace(max_pages=None, include_blocked=True))
+
+    with session_scope(get_engine(isolated_db)) as session:
+        listing = session.get(Listing, "fake_ok:model_y-DE")
+        assert listing.first_registration is None
+        assert listing.model_year is None

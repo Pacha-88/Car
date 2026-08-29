@@ -28,6 +28,21 @@ REPO="git+https://github.com/Pacha-88/Car"
 chmod +x "$SELF" 2>/dev/null || true
 xattr -d com.apple.quarantine "$SELF" 2>/dev/null || true
 
+# --- egyszerre csak egy futas ---
+# A cron 07:30-kor inditja, te pedig barmikor duplan kattinthatsz. Ket
+# parhuzamos futas ugyanazokat a sorokat irja ugyanabban az adatbazisban:
+# nem romlik el tole adat (a hibas kombo hibasnak szamit, es akkor nem
+# nyugdijaz semmit), de az egyik futas ertelmetlen "duplicate key" hibaval
+# all meg. Egyszerubb meg sem engedni.
+LOCK="$SCRIPT_DIR/.scrape-local.lock"
+if ! mkdir "$LOCK" 2>/dev/null; then
+  echo "Már fut egy scrape ebből a mappából (zár: $LOCK)."
+  echo "Ha biztosan nem fut, töröld a mappát és indítsd újra."
+  [ "${1:-}" != "auto" ] && read -r -p "Nyomj Entert a kilépéshez..." _
+  exit 0
+fi
+trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+
 # --- uv telepítése, ha még nincs ---
 if ! command -v uv >/dev/null 2>&1; then
   echo 'Az "uv" futtató még nincs telepítve — telepítem most (egyszeri lépés)...'
@@ -132,15 +147,18 @@ fi
 
 # --- napi automatikus futtatás felajánlása (csak kézi indításkor) ---
 if [ "${1:-}" != "auto" ]; then
-  CRON_LINE="0 7 * * * /usr/bin/env bash \"$SCRIPT_DIR/$(basename "$0")\" auto >> \"$SCRIPT_DIR/scrape-local.log\" 2>&1"
+  # 07:30, nem 07:00: a GitHub-futas 05:00 UTC-kor indul, ami nyari
+  # idoszamitasban pont 07:00 nalunk - ket futas ugyanabba az adatbazisba
+  # ugyanabban a percben. Fel ora keses ezt megszunteti.
+  CRON_LINE="30 7 * * * /usr/bin/env bash \"$SCRIPT_DIR/$(basename "$0")\" auto >> \"$SCRIPT_DIR/scrape-local.log\" 2>&1"
   if ! crontab -l 2>/dev/null | grep -F "$(basename "$0")" >/dev/null; then
     echo
-    read -r -p "Fusson ezentúl minden nap automatikusan 07:00-kor? (i/n): " SCHED
+    read -r -p "Fusson ezentúl minden nap automatikusan 07:30-kor? (i/n): " SCHED
     if [ "$SCHED" = "i" ] || [ "$SCHED" = "I" ]; then
       (crontab -l 2>/dev/null; echo "$CRON_LINE") | crontab -
       echo "Beállítva (cron). Megnézés: crontab -l · törlés: crontab -e"
       if [ "$(uname)" = "Darwin" ]; then
-        echo "macOS megjegyzés: ha a gép alszik 07:00-kor, a futás kimarad —"
+        echo "macOS megjegyzés: ha a gép alszik 07:30-kor, a futás kimarad —"
         echo "a következő kézi vagy másnapi futás pótolja, adat nem vész el."
       fi
     fi
