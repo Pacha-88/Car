@@ -4,6 +4,8 @@ import { formatKm, formatYearMonth } from "../lib/format";
 import { useMoney } from "../lib/moneyContext";
 import { SOURCE_COLOR_VAR, SOURCE_LABELS, VARIANT_LABELS, listingTitle, type Listing } from "../types";
 import { DealBadge } from "./DealBadge";
+import { PriceDropBadge } from "./PriceDropBadge";
+import { priceChange } from "../lib/priceHistory";
 import { ListingPhoto } from "./ListingPhoto";
 
 interface ListingGridProps {
@@ -13,7 +15,7 @@ interface ListingGridProps {
   dealScores: Map<string, DealInfo>;
 }
 
-type SortKey = "newest" | "best_deal" | "price_asc" | "price_desc" | "mileage_asc";
+type SortKey = "newest" | "best_deal" | "biggest_drop" | "price_asc" | "price_desc" | "mileage_asc";
 const PAGE_SIZES = [25, 50, 100];
 
 const COUNTRY_FLAGS: Record<string, string> = { DE: "🇩🇪", AT: "🇦🇹", HU: "🇭🇺", NL: "🇳🇱", BE: "🇧🇪", IT: "🇮🇹", ES: "🇪🇸", FR: "🇫🇷", LU: "🇱🇺" };
@@ -24,6 +26,10 @@ function sortListings(listings: Listing[], key: SortKey, dealScores: Map<string,
     case "best_deal":
       // Most below market first; unscored cars sort last, keeping newest order.
       return copy.sort((a, b) => (dealScores.get(a.id)?.pct ?? Infinity) - (dealScores.get(b.id)?.pct ?? Infinity));
+    case "biggest_drop":
+      // Deepest cut first; a car whose seller never moved sorts last rather
+      // than mixing in among the ones who did.
+      return copy.sort((a, b) => (priceChange(a)?.pct ?? 0) - (priceChange(b)?.pct ?? 0));
     case "price_asc":
       return copy.sort((a, b) => a.priceEur - b.priceEur);
     case "price_desc":
@@ -87,6 +93,7 @@ export function ListingGrid({ listings, watchlist, onToggleWatchlist, dealScores
             >
               <option value="newest">Newest listings first</option>
               <option value="best_deal">Best deals first</option>
+              <option value="biggest_drop">Biggest price drop</option>
               <option value="price_asc">Price: low to high</option>
               <option value="price_desc">Price: high to low</option>
               <option value="mileage_asc">Mileage: low to high</option>
@@ -229,12 +236,16 @@ function ListingCard({
       </div>
       <div className="flex flex-1 flex-col gap-0.5 p-2.5">
         <p className="line-clamp-2 text-[11px] font-medium leading-snug text-primary">{listingTitle(listing)}</p>
-        <p className="text-[10px] text-muted">{subtitle(listing)}</p>
+        <p className="text-[10px] text-muted">
+          {subtitle(listing)}
+          {listing.hasFsd && <span className="ml-1 font-semibold text-secondary">· FSD</span>}
+        </p>
         <div className="numeral mt-auto flex items-baseline justify-between gap-2 pt-1.5">
           <span className="text-[15px] font-semibold leading-none text-primary">{money.formatListing(listing)}</span>
           <span className="text-[10px] text-muted">{listing.mileageKm !== null ? formatKm(listing.mileageKm) : "—"}</span>
         </div>
-        <div className="flex justify-end">
+        <div className="flex items-center justify-between gap-1">
+          <PriceDropBadge listing={listing} compact />
           <DealBadge deal={deal} mode="inline" />
         </div>
       </div>
@@ -269,8 +280,12 @@ function ListingRow({
         <p className="text-[10px] text-muted">
           {SOURCE_LABELS[listing.source] ?? listing.source} · {COUNTRY_FLAGS[listing.country] ?? listing.country} ·{" "}
           {subtitle(listing)}
+          {listing.hasFsd && <span className="ml-1 font-semibold text-secondary">· FSD</span>}
         </p>
       </div>
+      <span className="shrink-0">
+        <PriceDropBadge listing={listing} />
+      </span>
       <span className="shrink-0">
         <DealBadge deal={deal} mode="pill" />
       </span>

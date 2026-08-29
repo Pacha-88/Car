@@ -3,6 +3,9 @@ export type ChassisGen = "legacy" | "highland" | "juniper" | null;
 export type Variant = "long_range_awd" | "long_range_rwd" | "performance" | "rwd" | "other" | null;
 export type SellerType = "dealer" | "private" | "tesla" | null;
 
+/** [ISO date, price in EUR, price in the seller's own currency] */
+export type PricePoint = [string, number, number];
+
 export interface Listing {
   id: string;
   source: string;
@@ -28,6 +31,13 @@ export interface Listing {
   mileageKm: number | null;
   daysAtCurrentPrice: number;
   isNew: boolean;
+  /** One entry per price the seller actually set: [ISO date, EUR, original].
+   * A car listed a month has thirty snapshots behind it and usually one
+   * entry here. Optional - an export written before this has none. */
+  priceHistory?: PricePoint[] | null;
+  /** The ad says Full Self-Driving is already on the car - not Autopilot,
+   * not Enhanced Autopilot, and not rented by the month. */
+  hasFsd?: boolean;
 }
 
 export interface ExportPayload {
@@ -36,7 +46,22 @@ export interface ExportPayload {
   /** Forints per euro at the last scrape. null until a run has stored a
    * rate, in which case the dashboard stays in euros rather than guessing. */
   hufPerEur: number | null;
+  /** The market's own movement, one row per day per model, oldest first. */
+  marketHistory?: MarketDay[] | null;
   listings: Listing[];
+}
+
+export interface MarketDay {
+  date: string; // ISO date
+  model: Model;
+  medianEur: number;
+  p25Eur: number;
+  p75Eur: number;
+  n: number;
+  /** 100 on the first day, moved only by the price changes of cars listed
+   * on both that day and the one before. Unlike the median, it cannot be
+   * moved by cheap cars arriving or expensive ones selling. */
+  index: number;
 }
 
 export const SOURCE_LABELS: Record<string, string> = {

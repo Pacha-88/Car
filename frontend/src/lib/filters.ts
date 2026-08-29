@@ -21,6 +21,8 @@ export interface FilterState {
   newOnly: boolean; // keep only cars first seen in the latest scrape
   watchlistOnly: boolean;
   dealsOnly: boolean; // keep only cars priced below market for their variant/mileage/age
+  fsdOnly: boolean; // keep only cars whose ad says FSD is already on them
+  priceDropsOnly: boolean; // keep only cars whose seller has come down since listing
   showTrendLine: boolean;
   showExcluded: boolean;
 }
@@ -108,6 +110,8 @@ export function defaultFilterState(listings: Listing[], model: Model): FilterSta
     newOnly: false,
     watchlistOnly: false,
     dealsOnly: false,
+    fsdOnly: false,
+    priceDropsOnly: false,
     showTrendLine: true,
     showExcluded: false,
   };
@@ -141,6 +145,7 @@ export function applyFilters(listings: Listing[], f: FilterState, watchlist: Set
     if (l.priceEur < f.priceRange[0] || l.priceEur > f.priceRange[1]) return false;
     if (l.mileageKm !== null && (l.mileageKm < f.mileageRange[0] || l.mileageKm > f.mileageRange[1])) return false;
     if (f.watchlistOnly && !watchlist.has(l.id)) return false;
+    if (f.fsdOnly && !l.hasFsd) return false;
     return true;
   });
 }

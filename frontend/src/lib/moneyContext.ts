@@ -20,6 +20,14 @@ export interface Money {
    * outside a range its own card appears to be inside. That is the price of
    * both numbers being right about their own question. */
   formatListing: (listing: { priceEur: number; priceOriginal?: number | null; currencyOriginal?: string | null }) => string;
+  /** How much a price MOVED on one car, in the same currency the price
+   * itself is shown in, so "12,4 millió Ft" and "450.000 Ft" are the same
+   * kind of number. Unsigned - the caller says which way it went, and a
+   * "▼" beside a "−" says it twice. */
+  formatListingAmount: (
+    listing: { currencyOriginal?: string | null },
+    amount: { eur: number; original: number },
+  ) => string;
   formatSigned: (eurValue: number) => string;
   formatTick: (eurValue: number) => string;
   /** Y-axis width the current currency's ticks need. */

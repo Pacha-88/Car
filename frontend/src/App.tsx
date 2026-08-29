@@ -3,6 +3,7 @@ import { DepreciationModule } from "./components/DepreciationModule";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { FilterBar } from "./components/FilterBar";
 import { ListingGrid } from "./components/ListingGrid";
+import { MarketTrendChart } from "./components/MarketTrendChart";
 import { PriceScatterChart } from "./components/PriceScatterChart";
 import { StatTiles } from "./components/StatTiles";
 import { MoneyProvider } from "./hooks/useMoney";
@@ -10,6 +11,7 @@ import { useMoney } from "./lib/moneyContext";
 import { useListings } from "./hooks/useListings";
 import { useWatchlist } from "./hooks/useWatchlist";
 import { computeDealScores } from "./lib/dealScore";
+import { isPriceDrop, priceChange } from "./lib/priceHistory";
 import { ageBucketIndex, ageInYears, computeDepreciationCurve } from "./lib/depreciation";
 import { applyFilters, defaultFilterState, type FilterState } from "./lib/filters";
 import { linearSlope } from "./lib/trend";
@@ -123,7 +125,7 @@ export default function App() {
 }
 
 function Dashboard({ data }: { data: ReturnType<typeof useListings> }) {
-  const { listings, latestScrapeDate, loading, error } = data;
+  const { listings, latestScrapeDate, marketHistory, loading, error } = data;
   const { watchlist, toggle: toggleWatchlist } = useWatchlist();
   const [model, setModel] = useState<Model>("model_y");
   const [filters, setFilters] = useState<FilterState | null>(null);
@@ -200,6 +202,7 @@ function Dashboard({ data }: { data: ReturnType<typeof useListings> }) {
       out = out.filter((l) => DEAL_TIERS_KEPT.has(dealScores.get(l.id)?.tier ?? ""));
     }
     if (filters?.newOnly) out = out.filter((l) => l.isNew);
+    if (filters?.priceDropsOnly) out = out.filter((l) => isPriceDrop(priceChange(l)));
     return out;
   }, [displayed, filters, dealScores]);
 
@@ -246,6 +249,11 @@ function Dashboard({ data }: { data: ReturnType<typeof useListings> }) {
   }, [gridListings]);
 
   const newCount = useMemo(() => displayed.filter((l) => l.isNew).length, [displayed]);
+  const dropCount = useMemo(() => displayed.filter((l) => isPriceDrop(priceChange(l))).length, [displayed]);
+  // Counted over the same set the grid draws from, so the chip promises
+  // the number of cars clicking it actually leaves - `modelListings`
+  // ignores the other facets and advertised five where four survived.
+  const fsdCount = useMemo(() => displayed.filter((l) => l.hasFsd).length, [displayed]);
 
   if (loading) {
     return <div className="flex h-screen items-center justify-center text-sm text-muted">Loading listings…</div>;
@@ -299,6 +307,8 @@ function Dashboard({ data }: { data: ReturnType<typeof useListings> }) {
           newCount={newCount}
           watchlistCount={watchlistCount}
           dealCount={dealCount}
+          dropCount={dropCount}
+          fsdCount={fsdCount}
           onReset={() => setFilters(defaultFilterState(listings, model))}
         />
       </div>
@@ -313,6 +323,12 @@ function Dashboard({ data }: { data: ReturnType<typeof useListings> }) {
             onToggleWatchlist={toggleWatchlist}
             dealScores={dealScores}
           />
+        </ErrorBoundary>
+      </div>
+
+      <div className="mb-5">
+        <ErrorBoundary label="The market trend chart">
+          <MarketTrendChart history={marketHistory} model={model} />
         </ErrorBoundary>
       </div>
 

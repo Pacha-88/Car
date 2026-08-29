@@ -46,10 +46,22 @@ interface FilterBarProps {
   newCount: number;
   watchlistCount: number;
   dealCount: number;
+  dropCount: number;
+  fsdCount: number;
   onReset: () => void;
 }
 
-export function FilterBar({ filters, onChange, modelListings, newCount, watchlistCount, dealCount, onReset }: FilterBarProps) {
+export function FilterBar({
+  filters,
+  onChange,
+  modelListings,
+  newCount,
+  watchlistCount,
+  dealCount,
+  dropCount,
+  fsdCount,
+  onReset,
+}: FilterBarProps) {
   const money = useMoney();
   const bounds = dataBounds(modelListings);
   const sourcesPresent = [...new Set(modelListings.map((l) => l.source))];
@@ -106,7 +118,9 @@ export function FilterBar({ filters, onChange, modelListings, newCount, watchlis
     rangesTouched +
     Number(filters.watchlistOnly) +
     Number(filters.dealsOnly) +
-    Number(filters.newOnly);
+    Number(filters.newOnly) +
+    Number(filters.priceDropsOnly) +
+    Number(filters.fsdOnly);
 
   return (
     <section className="rounded-xl border border-border bg-surface-1 shadow-[var(--shadow-1)]">
@@ -242,6 +256,21 @@ export function FilterBar({ filters, onChange, modelListings, newCount, watchlis
               dot="var(--status-good)"
               state={filters.dealsOnly ? "on" : "calm"}
               onClick={() => set("dealsOnly", !filters.dealsOnly)}
+            />
+            <Chip
+              label="Price dropped"
+              count={dropCount}
+              dot="var(--status-good)"
+              title="Cars whose seller has come down at least 1% since the ad went up"
+              state={filters.priceDropsOnly ? "on" : "calm"}
+              onClick={() => set("priceDropsOnly", !filters.priceDropsOnly)}
+            />
+            <Chip
+              label="FSD"
+              count={fsdCount}
+              title="The ad says Full Self-Driving is already on the car - not Autopilot, and not rented by the month"
+              state={filters.fsdOnly ? "on" : "calm"}
+              onClick={() => set("fsdOnly", !filters.fsdOnly)}
             />
           </div>
 
