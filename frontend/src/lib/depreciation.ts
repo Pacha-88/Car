@@ -133,9 +133,18 @@ export function bucketTransitions(buckets: DepreciationBucket[]): BucketTransiti
   return transitions;
 }
 
+/** The biggest DROP, not the most negative delta of an all-rising curve.
+ *
+ * The same mistake curveFlattensAt had, right below: reducing over every
+ * transition meant that when no step declined at all, the smallest RISE
+ * won and the card announced a price increase as a drop. Reachable with
+ * two ordinary chips on the real data - Germany + Performance (29 cars)
+ * reported "steepest drop 3yr -> 4yr" at +1.989 EUR. Only a decline can be
+ * a drop; when nothing declines the card hides itself. */
 export function steepestDrop(transitions: BucketTransition[]): BucketTransition | null {
-  if (transitions.length === 0) return null;
-  return transitions.reduce((min, t) => (t.deltaEur < min.deltaEur ? t : min));
+  const declines = transitions.filter((t) => t.deltaEur < 0);
+  if (declines.length === 0) return null;
+  return declines.reduce((min, t) => (t.deltaEur < min.deltaEur ? t : min));
 }
 
 /** Where the decline is gentlest - the smallest DROP, not the largest delta.

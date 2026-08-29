@@ -130,6 +130,31 @@ def test_steepest_drop_empty_transitions_returns_none():
     assert curve_flattens_at([]) is None
 
 
+def test_steepest_drop_never_reports_a_rise():
+    """A curve that only goes up has no drop to name.
+
+    Thin buckets in a narrow selection routinely produce an all-rising
+    curve; before this, the smallest rise was printed under a "steepest
+    drop" heading as a positive number.
+    """
+    rising = [
+        BucketTransition(from_label="1yr", to_label="2yr", delta_eur=1_989.0),
+        BucketTransition(from_label="2yr", to_label="3yr", delta_eur=412.0),
+    ]
+    assert steepest_drop(rising) is None
+
+    mixed = [*rising, BucketTransition(from_label="3yr", to_label="4yr", delta_eur=-300.0)]
+    drop = steepest_drop(mixed)
+    assert drop is not None
+    assert drop.delta_eur == pytest.approx(-300.0)
+
+    # A perfectly flat step is not a drop either, though it does count as
+    # the curve flattening.
+    flat = [BucketTransition(from_label="1yr", to_label="2yr", delta_eur=0.0)]
+    assert steepest_drop(flat) is None
+    assert curve_flattens_at(flat) is not None
+
+
 def test_cheapest_to_own_picks_lowest_annualized_cost():
     buckets = compute_depreciation_curve(_synthetic_listings(), as_of=AS_OF, min_bucket_size=10)
     by_index = {b.bucket_index: b for b in buckets if not b.is_thin}

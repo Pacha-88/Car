@@ -61,9 +61,15 @@ def detect_chassis(
     cutover = CUTOVERS[model]
 
     if title:
+        # Only this model's own generations. Dealer ads cross-sell ("Model 3
+        # LR, auch Model Y Juniper verfügbar"), and matching every codename
+        # put a Model Y chassis on a Model 3 - overriding a 2022
+        # registration date that said Legacy plainly. A generation the model
+        # does not have is never the answer.
+        allowed = {cutover.refresh_name, LEGACY}
         lowered = title.lower()
         for generation, hints in _TITLE_HINTS.items():
-            if any(hint in lowered for hint in hints):
+            if generation in allowed and any(hint in lowered for hint in hints):
                 return generation
 
     if first_registration is not None:

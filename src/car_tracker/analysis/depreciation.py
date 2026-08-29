@@ -144,7 +144,18 @@ def bucket_transitions(buckets: list[DepreciationBucket]) -> list[BucketTransiti
 
 
 def steepest_drop(transitions: list[BucketTransition]) -> BucketTransition | None:
-    return min(transitions, key=lambda t: t.delta_eur) if transitions else None
+    """The biggest DROP, not the most negative delta of an all-rising curve.
+
+    The same mistake curve_flattens_at had, one function down: taking the
+    minimum over every transition meant that when no step declined at all,
+    the smallest RISE won and the card announced a price increase as a
+    drop. Reachable with two ordinary chips on the real data - Germany +
+    Performance (29 cars) reported "steepest drop 3yr -> 4yr" at +1.989
+    EUR. Only a decline can be a drop; when nothing declines the caller
+    gets None and the card hides itself.
+    """
+    declines = [t for t in transitions if t.delta_eur < 0]
+    return min(declines, key=lambda t: t.delta_eur) if declines else None
 
 
 def curve_flattens_at(transitions: list[BucketTransition]) -> BucketTransition | None:

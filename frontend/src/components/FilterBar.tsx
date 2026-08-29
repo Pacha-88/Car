@@ -65,7 +65,16 @@ export function FilterBar({ filters, onChange, modelListings, newCount, watchlis
       .sort((a, b) => (a[0] === "unknown" ? 1 : b[0] === "unknown" ? -1 : b[1] - a[1]))
       .map(([key]) => key);
   })();
-  const chassisOptions = MODEL_CHASSIS_OPTIONS[filters.model] ?? ["legacy", "unknown"];
+  // The model's own generations in a stable order, plus anything the data
+  // actually carries. Rendering only the expected keys meant a listing with
+  // an unexpected one had no chip: invisible, and dropped for good the
+  // moment the group was cleared (clearFacet rebuilds the set from the
+  // options it was shown).
+  const chassisOptions = (() => {
+    const expected = MODEL_CHASSIS_OPTIONS[filters.model] ?? ["legacy", "unknown"];
+    const present = new Set(modelListings.map((l) => l.chassisGen ?? "unknown"));
+    return [...expected, ...[...present].filter((c) => !expected.includes(c))];
+  })();
 
   const countryOptions = [...NAMED_COUNTRIES, REST_OF_EU];
   const variantOptions = ["long_range_awd", "long_range_rwd", "performance", "rwd", "other"];
@@ -166,7 +175,7 @@ export function FilterBar({ filters, onChange, modelListings, newCount, watchlis
             selected={filters.chassisGens}
             mode="all-selected"
             onChange={(v) => set("chassisGens", v)}
-            renderLabel={(c) => (c === "unknown" ? "Unknown" : CHASSIS_LABELS[c])}
+            renderLabel={(c) => (c === "unknown" ? "Unknown" : (CHASSIS_LABELS[c] ?? c))}
           />
           <FacetGroup
             label="Colour"
