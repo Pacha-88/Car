@@ -13,11 +13,13 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from car_tracker.analysis.listing_status import days_at_current_price, is_new_since_last_scrape
+from car_tracker.analysis.price_history import market_history, price_points
 from car_tracker.db.models import FxRate, Listing, ListingSnapshot
 from car_tracker.db.session import init_db, session_scope
 from car_tracker.fx.ecb import fetch_latest_rates
 from car_tracker.normalize.chassis import detect_chassis
 from car_tracker.normalize.currency import EUR, market_currency, to_eur
+from car_tracker.normalize.features import has_fsd
 from car_tracker.normalize.registration import plausible_registration
 from car_tracker.normalize.title import ensure_title
 from car_tracker.normalize.variant import normalize_variant
@@ -509,8 +511,18 @@ def cmd_export(args: argparse.Namespace) -> None:
         huf_per_eur = _latest_huf_per_eur(session)
 
         snapshots_by_listing: dict[str, list[ListingSnapshot]] = defaultdict(list)
+        all_snapshots: list[ListingSnapshot] = []
         for snapshot in session.execute(select(ListingSnapshot)).scalars():
             snapshots_by_listing[snapshot.listing_id].append(snapshot)
+            all_snapshots.append(snapshot)
+
+        # Every listing, retired ones included. The market index needs the
+        # cars that SOLD more than it needs the ones still on sale: drop
+        # them and it only ever tracks what nobody wanted.
+        model_of = {
+            listing_id: model
+            for listing_id, model in session.execute(select(Listing.id, Listing.model)).all()
+        }
 
         listings_out = []
         for listing in session.execute(select(Listing).where(Listing.is_active.is_(True))).scalars():
@@ -553,6 +565,17 @@ def cmd_export(args: argparse.Namespace) -> None:
                     # its listings can carry a rate days or weeks old.
                     "priceOriginal": latest.price_original,
                     "currencyOriginal": latest.currency_original,
+                    # Only the days the seller actually changed the number.
+                    # A car listed a month has thirty snapshots and one or
+                    # two prices, so this stays small enough to ship.
+                    "priceHistory": [
+                        [point.on.isoformat(), point.price_eur, point.price_original]
+                        for point in price_points(snapshots)
+                    ],
+                    # Derived from the stored title rather than a column:
+                    # there is no migration mechanism here, so a new column
+                    # would simply not exist on the deployed database.
+                    "hasFsd": has_fsd(listing.title_raw),
                     "mileageKm": latest.mileage_km,
                     "daysAtCurrentPrice": days_at_current_price(snapshots, as_of=now),
                     "isNew": is_new_since_last_scrape(listing.first_seen_at, latest_scrape_date=latest_scrape_date)
@@ -561,6 +584,8 @@ def cmd_export(args: argparse.Namespace) -> None:
                 }
             )
 
+        market_days = market_history(all_snapshots, model_of=model_of)
+
     payload = {
         "generatedAt": now.isoformat(),
         "latestScrapeDate": latest_scrape_date.isoformat() if latest_scrape_date else None,
@@ -568,6 +593,21 @@ def cmd_export(args: argparse.Namespace) -> None:
         # forints without every listing carrying a converted copy that
         # would go stale the moment the rate moved.
         "hufPerEur": huf_per_eur,
+        # The market's own movement, per model, oldest day first. `index`
+        # is the mix-proof one - see analysis/price_history.py for why a
+        # median of everything on sale is not the price of anything.
+        "marketHistory": [
+            {
+                "date": day.on.isoformat(),
+                "model": day.model,
+                "medianEur": day.median_eur,
+                "p25Eur": day.p25_eur,
+                "p75Eur": day.p75_eur,
+                "n": day.n,
+                "index": day.index,
+            }
+            for day in market_days
+        ],
         "listings": listings_out,
     }
     # The default target (frontend/public/data/) doesn't exist in a fresh
