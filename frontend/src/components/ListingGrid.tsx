@@ -48,7 +48,10 @@ export function ListingGrid({ listings, watchlist, onToggleWatchlist, dealScores
 
   return (
     <div>
-      <div className="mb-3 flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
+      {/* Sticky within the grid only: 50 cards is a long scroll, and the
+          count plus the sort/view controls are what you reach for halfway
+          down it. It releases as soon as the grid ends. */}
+      <div className="sticky top-0 z-20 -mx-1 mb-3 flex flex-wrap items-end justify-between gap-x-4 gap-y-2 bg-surface-0/85 px-1 py-2 backdrop-blur-sm">
         <div className="min-w-0">
           <div className="eyebrow">Listings</div>
           <h2 className="mt-1 text-sm font-semibold leading-tight text-primary">
