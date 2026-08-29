@@ -75,11 +75,17 @@ export function FilterBar({ filters, onChange, modelListings, newCount, watchlis
     onChange({ ...filters, [key]: value });
   }
 
-  const rangesTouched =
-    filters.yearRange[0] !== bounds.yearRange[0] ||
-    filters.yearRange[1] !== bounds.yearRange[1] ||
-    filters.priceRange[0] > bounds.priceRange[0] ||
-    filters.mileageRange[0] > 0;
+  // Every handle, not just the two that move first. Checking only the low
+  // ends meant dragging the price or mileage MAX down hid listings while
+  // the bar still said "showing everything" and Reset all stayed disabled -
+  // a filter you could apply but not undo. `!==` rather than a narrowing
+  // comparison on purpose: a handle parked off its default is something to
+  // reset even when it happens to hide nothing.
+  const rangesTouched = [
+    filters.yearRange[0] !== bounds.yearRange[0] || filters.yearRange[1] !== bounds.yearRange[1],
+    filters.priceRange[0] !== bounds.priceRange[0] || filters.priceRange[1] !== bounds.priceRange[1],
+    filters.mileageRange[0] !== bounds.mileageRange[0] || filters.mileageRange[1] !== bounds.mileageRange[1],
+  ].filter(Boolean).length;
 
   const narrowedGroups =
     Number(isFacetNarrowed(filters.countries, countryOptions, "all-selected")) +
@@ -88,9 +94,10 @@ export function FilterBar({ filters, onChange, modelListings, newCount, watchlis
     Number(isFacetNarrowed(filters.variants, variantOptions, "all-selected")) +
     Number(isFacetNarrowed(filters.chassisGens, chassisOptions, "all-selected")) +
     Number(isFacetNarrowed(filters.colors, colorsPresent, "opt-in")) +
-    Number(rangesTouched) +
+    rangesTouched +
     Number(filters.watchlistOnly) +
-    Number(filters.dealsOnly);
+    Number(filters.dealsOnly) +
+    Number(filters.newOnly);
 
   return (
     <section className="rounded-xl border border-border bg-surface-1 shadow-[var(--shadow-1)]">
@@ -210,8 +217,8 @@ export function FilterBar({ filters, onChange, modelListings, newCount, watchlis
               label="New since last scrape"
               count={newCount}
               dot="var(--status-warning)"
-              state={filters.highlightNew ? "on" : "calm"}
-              onClick={() => set("highlightNew", !filters.highlightNew)}
+              state={filters.newOnly ? "on" : "calm"}
+              onClick={() => set("newOnly", !filters.newOnly)}
             />
             <Chip
               label="Watchlist"

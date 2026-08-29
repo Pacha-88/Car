@@ -31,6 +31,10 @@ interface ScatterPoint {
 
 interface PriceScatterChartProps {
   listings: Listing[];
+  /** Newest registration year across the whole model, filters ignored. The
+   * year palette is anchored to it so a car keeps its colour no matter what
+   * is filtered out around it. */
+  paletteMaxYear: number;
   showTrendLine: boolean;
   watchlist: Set<string>;
   onToggleWatchlist: (id: string) => void;
@@ -42,6 +46,7 @@ const DOT_RADIUS = 4;
 
 export function PriceScatterChart({
   listings,
+  paletteMaxYear,
   showTrendLine,
   watchlist,
   onToggleWatchlist,
@@ -58,12 +63,17 @@ export function PriceScatterChart({
         year: l.firstRegistration ? new Date(l.firstRegistration).getFullYear() : (l.modelYear ?? 0),
       }))
       .filter((p) => p.year > 0);
-    const maxYear = withYear.length ? Math.max(...withYear.map((p) => p.year)) : new Date().getFullYear();
-    return withYear.map((p) => ({ ...p, color: yearColor(p.year, maxYear), older: isOlderBucket(p.year, maxYear) }));
-  }, [listings]);
+    return withYear.map((p) => ({
+      ...p,
+      color: yearColor(p.year, paletteMaxYear),
+      older: isOlderBucket(p.year, paletteMaxYear),
+    }));
+  }, [listings, paletteMaxYear]);
 
+  // The legend lists the years actually on screen, but keyed to the same
+  // model-wide anchor as the marks, so its swatches always match them.
   const years = useMemo(() => [...new Set(points.map((p) => p.year))].sort(), [points]);
-  const maxYear = years[years.length - 1];
+  const maxYear = paletteMaxYear;
 
   // Hover is tracked per mark rather than left to Recharts. Its tooltip
   // resolves by x-axis position, so two cars at the same mileage but very
@@ -237,8 +247,14 @@ export function PriceScatterChart({
  * marks touching the frame. Never dips below zero - a negative asking
  * price is not a thing. */
 function niceDomain(lo: number, hi: number): [number, number] {
-  if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) {
-    return [Math.max(0, lo - 1), hi + 1];
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) return [0, 1];
+  if (hi <= lo) {
+    // One listing, or several priced identically. A domain one unit wide
+    // rounded every tick to the same string - four rows of "12,7M Ft" up
+    // the axis - so open it to +-10% of the value instead.
+    const half = Math.abs(hi) * 0.1 || 1;
+    lo = hi - half;
+    hi = hi + half;
   }
   const pad = (hi - lo) * 0.06;
   const rawStep = (hi - lo + 2 * pad) / 5;
@@ -274,7 +290,10 @@ const ChartBody = memo(function ChartBody({
   // the automatic domain used to produce.
   const xMax = useMemo(() => {
     const top = Math.max(...points.map((p) => p.mileageKm), 1);
-    return Math.ceil(top / 25_000) * 25_000;
+    // +1 before snapping so a maximum that already sits on a tick boundary
+    // still gets a step of headroom - otherwise that car is drawn exactly
+    // on the right frame and half of its dot is clipped away.
+    return Math.ceil((top + 1) / 25_000) * 25_000;
   }, [points]);
   // A dot plot has no baseline to grow from, so - unlike a bar chart - it
   // is not obliged to include zero, and forcing it wasted the bottom 60% of

@@ -20,6 +20,27 @@ const DEAL_TIERS_KEPT = new Set(["great", "good"]);
 const MIN_BUCKET_SIZE = 10;
 const REFERENCE_KM_FOR_EXCLUSION = 60_000;
 
+/** How old the data is, said out loud. A dot that is always green claims
+ * the export is fresh whatever its date; this one goes amber after a
+ * missed day and red after a missed week, which is the actual question
+ * ("is this still the market?"). */
+// Read once at module load: the age only needs day granularity, and a
+// clock call inside render is both impure and pointless here.
+const LOADED_AT = Date.now();
+
+function ScrapeFreshness({ date }: { date: string }) {
+  const days = Math.floor((LOADED_AT - new Date(`${date}T12:00:00`).getTime()) / 86_400_000);
+  const tone = days <= 1 ? "bg-status-good" : days <= 7 ? "bg-status-warning" : "bg-status-critical";
+  const age = days <= 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`;
+  return (
+    <p className="mt-1.5 flex items-center gap-1.5 text-xs text-muted" title={`Scraped ${age}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${tone}`} aria-hidden />
+      Last scraped {date}
+      {days > 1 && <span>· {age}</span>}
+    </p>
+  );
+}
+
 /** The one segmented-control look, shared by the model tabs and the
  * display toggles - a single raised strip, the selected cell inverted. */
 function Segmented({ children }: { children: React.ReactNode }) {
@@ -169,28 +190,51 @@ function Dashboard({ data }: { data: ReturnType<typeof useListings> }) {
     });
   }, [preExclusion, filters, thinBucketIndices]);
 
-  // "Deals only" narrows the buyer-facing views (grid + scatter) to cars
-  // priced below market; the depreciation module stays on the full set.
+  // The two shortcut filters narrow the buyer-facing views (grid + scatter)
+  // together; the depreciation module stays on the full set. "New" used to
+  // narrow the chart alone, which left the grid and the stat tiles claiming
+  // 386 listings beside an empty plot.
   const gridListings = useMemo(() => {
-    if (!filters?.dealsOnly) return displayed;
-    return displayed.filter((l) => {
-      const tier = dealScores.get(l.id)?.tier;
-      return tier !== undefined && DEAL_TIERS_KEPT.has(tier);
-    });
+    let out = displayed;
+    if (filters?.dealsOnly) {
+      out = out.filter((l) => DEAL_TIERS_KEPT.has(dealScores.get(l.id)?.tier ?? ""));
+    }
+    if (filters?.newOnly) out = out.filter((l) => l.isNew);
+    return out;
   }, [displayed, filters, dealScores]);
-
-  const highlighted = useMemo(
-    () => (filters?.highlightNew ? gridListings.filter((l) => l.isNew) : gridListings),
-    [gridListings, filters],
-  );
 
   const dealCount = useMemo(
     () => displayed.filter((l) => DEAL_TIERS_KEPT.has(dealScores.get(l.id)?.tier ?? "")).length,
     [displayed, dealScores],
   );
 
+  // Counted over this model's listings rather than the whole watchlist: the
+  // chip used to advertise cars starred on the OTHER model, so clicking it
+  // showed nothing.
+  const watchlistCount = useMemo(
+    () => modelListings.filter((l) => watchlist.has(l.id)).length,
+    [modelListings, watchlist],
+  );
+
+  // The registration-year palette is anchored to the model, not to whatever
+  // survives the filters. Anchoring it to the visible points repainted the
+  // survivors on every filter click - isolate one chassis and 2022 went
+  // from purple to red - which is exactly what a categorical colour must
+  // never do.
+  const paletteMaxYear = useMemo(() => {
+    let max = 0;
+    for (const l of modelListings) {
+      const y = l.firstRegistration ? new Date(l.firstRegistration).getFullYear() : (l.modelYear ?? 0);
+      if (y > max) max = y;
+    }
+    return max || new Date().getFullYear();
+  }, [modelListings]);
+
+  // Measured over exactly what the grid and the chart are showing, the two
+  // shortcut chips included. Reading them off `displayed` instead left the
+  // header saying 386 listings above a grid showing 51.
   const eurPer10kKm = useMemo(() => {
-    const points = displayed
+    const points = gridListings
       .filter((l) => l.mileageKm !== null)
       .map((l) => [l.mileageKm as number, l.priceEur] as [number, number]);
     if (points.length < 2) return null;
@@ -199,9 +243,9 @@ function Dashboard({ data }: { data: ReturnType<typeof useListings> }) {
     } catch {
       return null;
     }
-  }, [displayed]);
+  }, [gridListings]);
 
-  const newCount = useMemo(() => preExclusion.filter((l) => l.isNew).length, [preExclusion]);
+  const newCount = useMemo(() => displayed.filter((l) => l.isNew).length, [displayed]);
 
   if (loading) {
     return <div className="flex h-screen items-center justify-center text-sm text-muted">Loading listings…</div>;
@@ -227,12 +271,7 @@ function Dashboard({ data }: { data: ReturnType<typeof useListings> }) {
             <h1 className="mt-1.5 text-[22px] font-semibold leading-none tracking-tight text-primary">
               Tesla {model === "model_y" ? "Model Y" : "Model 3"}
             </h1>
-            {latestScrapeDate && (
-              <p className="mt-1.5 flex items-center gap-1.5 text-xs text-muted">
-                <span className="h-1.5 w-1.5 rounded-full bg-status-good" aria-hidden />
-                Last scraped {latestScrapeDate}
-              </p>
-            )}
+            {latestScrapeDate && <ScrapeFreshness date={latestScrapeDate} />}
           </div>
           <div className="flex items-center gap-2">
             <Segmented>
@@ -249,7 +288,7 @@ function Dashboard({ data }: { data: ReturnType<typeof useListings> }) {
           </div>
         </div>
 
-        <StatTiles listings={displayed} eurPer10kKm={eurPer10kKm} />
+        <StatTiles listings={gridListings} eurPer10kKm={eurPer10kKm} />
       </header>
 
       <div className="mb-5">
@@ -258,7 +297,7 @@ function Dashboard({ data }: { data: ReturnType<typeof useListings> }) {
           onChange={setFilters}
           modelListings={modelListings}
           newCount={newCount}
-          watchlistCount={watchlist.size}
+          watchlistCount={watchlistCount}
           dealCount={dealCount}
           onReset={() => setFilters(defaultFilterState(listings, model))}
         />
@@ -267,7 +306,8 @@ function Dashboard({ data }: { data: ReturnType<typeof useListings> }) {
       <div className="mb-5">
         <ErrorBoundary label="The price chart">
           <PriceScatterChart
-            listings={highlighted}
+            listings={gridListings}
+            paletteMaxYear={paletteMaxYear}
             showTrendLine={filters.showTrendLine}
             watchlist={watchlist}
             onToggleWatchlist={toggleWatchlist}

@@ -18,7 +18,7 @@ export interface FilterState {
   yearRange: [number, number];
   priceRange: [number, number];
   mileageRange: [number, number];
-  highlightNew: boolean;
+  newOnly: boolean; // keep only cars first seen in the latest scrape
   watchlistOnly: boolean;
   dealsOnly: boolean; // keep only cars priced below market for their variant/mileage/age
   showTrendLine: boolean;
@@ -105,7 +105,7 @@ export function defaultFilterState(listings: Listing[], model: Model): FilterSta
     chassisGens: new Set(["legacy", "highland", "juniper", "unknown"]),
     colors: new Set(),
     ...bounds,
-    highlightNew: false,
+    newOnly: false,
     watchlistOnly: false,
     dealsOnly: false,
     showTrendLine: true,
