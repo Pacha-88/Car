@@ -70,11 +70,11 @@ def listing_url(model: str, country: str, vin: str) -> str:
     own used-inventory page cannot 404, is sorted by price ascending exactly
     as this scraper queries it, and so has the car a click away.
 
-    Restoring the per-car link needs one fact, and the run now prints it:
-    `_report_link_fields` lists the fields a real car carries. If Tesla
-    hands us the URL, or anything containing the VIN, that line names it.
-    Failing that, opening the inventory page below and clicking any car
-    gives the pattern in ten seconds.
+    And the API cannot supply the answer: a full field dump from a live DE
+    response has since been read, and none of its ~110 fields is this car's
+    page (the only URL in there is ThirdPartyHistoryUrl, the history
+    report). So the pattern has to come from the site itself - opening the
+    inventory page below and clicking any car gives it in ten seconds.
     """
     locale = MARKET_LOCALES.get(country, "en_US")
     return f"https://www.tesla.com/{locale}/inventory/used/{MODEL_CODES[model]}"
@@ -233,11 +233,13 @@ class TeslaSource(Source):
     def _report_link_fields(sample: dict | None, *, model: str, country: str) -> None:
         """Print the fields a real car carries, once per market.
 
-        Two guesses at the per-car tesla.com URL have now 404'd, and this
-        sandbox cannot open tesla.com to check a third (it answers 403 to
-        datacenter traffic). Rather than guess again, print what the API
-        actually hands us: if the response carries the link, or anything
-        holding the VIN, this line ends the question in one run.
+        A full field dump from a live DE response (2026-08-29) settled the
+        question this was written for: the API carries no per-car page URL.
+        The ~110 fields include Vrl/VrlName, TrimCode, TitleStatus, Model,
+        ListingType and one URL - ThirdPartyHistoryUrl, which is the
+        history report, not the listing. So this stays, quiet, in case a
+        market or a future response does carry one; it prints nothing
+        otherwise instead of a hundred field names every run.
         """
         if sample is None:
             return
@@ -246,9 +248,9 @@ class TeslaSource(Source):
             key: str(value)[:120]
             for key, value in sample.items()
             if isinstance(value, str)
-            and (value.startswith("http") or value.startswith("/") or (vin and vin in value and key != "VIN"))
+            and key != "ThirdPartyHistoryUrl"  # a Carfax-style report, not this car's page
+            and (value.startswith("http") or (vin and vin in value and key != "VIN"))
         }
-        print(f"    tesla/{model}/{country}: fields on one car: {sorted(sample)}")
         if interesting:
             print(f"    tesla/{model}/{country}: link-shaped fields: {interesting}")
 

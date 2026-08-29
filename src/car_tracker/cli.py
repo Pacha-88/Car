@@ -170,9 +170,20 @@ def _run_scrape(targets: dict[str, dict[str, list[str]]], *, max_pages: int | No
     first_combo = True
     for source_name, target in targets.items():
         source_cls = SOURCES[source_name]
+        walled_off = False  # this site is refusing this address, for this run
         for model in target["models"]:
             for country in target["countries"]:
                 combo = f"{source_name}/{model}/{country}"
+                if walled_off:
+                    # A hard block is per-address and per-site, so every
+                    # remaining combo would meet the same wall - each one
+                    # opening a browser and standing in front of it. One
+                    # real run spent about twenty-five minutes that way
+                    # after Tesla walled it, and every extra request digs
+                    # the block deeper rather than out of it.
+                    print(f"skipped {combo}: {source_name} is refusing this address right now (hard block)")
+                    failures.append(combo)
+                    continue
                 # Pace the combos themselves, not just the pages within one.
                 # Each combo opens a fresh client, so per-source page delays
                 # don't span the gap between them - and six Tesla markets
@@ -204,6 +215,8 @@ def _run_scrape(targets: dict[str, dict[str, list[str]]], *, max_pages: int | No
                     failures.append(combo)
                     failed_sources.add(source_name)
                     incomplete_sources.add(source_name)
+                    if getattr(exc, "hard_block", False):
+                        walled_off = True
 
     retired = _retire_unseen(now, sources=targets, skip_sources=incomplete_sources)
     for source_name, count in sorted(retired.items()):

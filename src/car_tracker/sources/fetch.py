@@ -111,11 +111,16 @@ class FetchError(RuntimeError):
     can tell one refusal from another - a 429 rate limit, a 403 bot wall and
     a 412 "this market has no such endpoint" all arrive here as the same
     exception type but mean very different things to the source.
+
+    `hard_block` marks the wall: a page with nothing on it to solve, served
+    to this address for this whole site. Every further request during the
+    same run will meet the same wall, so the caller should stop asking.
     """
 
-    def __init__(self, message: str, *, statuses: tuple[int, ...] = ()) -> None:
+    def __init__(self, message: str, *, statuses: tuple[int, ...] = (), hard_block: bool = False) -> None:
         super().__init__(message)
         self.statuses = statuses
+        self.hard_block = hard_block
 
 
 def looks_unusable(status_code: int, body: str) -> bool:
@@ -124,6 +129,14 @@ def looks_unusable(status_code: int, body: str) -> bool:
         return True
     lowered = body[:4000].lower()
     return any(marker in lowered for marker in _CHALLENGE_MARKERS + _BLOCK_MARKERS)
+
+
+def is_hard_block(body: str) -> bool:
+    """True when the page is a wall, not a puzzle - nothing to solve on it."""
+    lowered = body[:4000].lower()
+    return any(marker in lowered for marker in _BLOCK_MARKERS) and not any(
+        marker in lowered for marker in _CHALLENGE_MARKERS
+    )
 
 
 def describe(status_code: int, body: str) -> str:
@@ -399,6 +412,14 @@ def _fetch_with_browser(url: str, *, accept_language: str, timeout: float) -> tu
         # and say what is going on, since an unexplained browser window is
         # just confusing. Either way the cleared cookie lands in the
         # persistent profile and serves later runs.
+        if is_hard_block(body):
+            # There is no puzzle on this page - waiting five minutes in
+            # front of it only makes a person watch a browser do nothing,
+            # and every extra request afterwards digs the block deeper.
+            if headed:
+                print(_still_blocked_advice(url, status, body), flush=True)
+            return status, body
+
         if headed:
             print(_headed_instructions(url, status, body), flush=True)
         deadline = time.monotonic() + (_HEADED_SOLVE_SECONDS if headed else _AUTO_SOLVE_SECONDS)
@@ -526,6 +547,7 @@ def fetch_html(url: str, *, accept_language: str = "en-US,en;q=0.9", timeout: fl
             f"{url}: blocked at both stages (impersonation: {first_failure}; browser: {describe(status, body)}). "
             "If this persists, try a visible browser: set CAR_TRACKER_HEADED=1 and run again.",
             statuses=tuple(c for c in (first_status, status) if c is not None),
+            hard_block=is_hard_block(body),
         )
     return body
 
