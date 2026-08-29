@@ -40,6 +40,12 @@ MODEL_SLUGS = {"model_y": "model-y", "model_3": "model-3"}
 # added here, wire it into market_currency() too.
 COUNTRY_CODES = {"DE": "D", "AT": "A", "NL": "NL", "BE": "B", "IT": "I", "ES": "E", "FR": "F", "LU": "L"}
 
+# A real offer path is `/offers/{make}-{model}-{version}-{fuel}-{colour}-cat_ma…`
+# and a bare id is a 36-character uuid; both clear this comfortably. One
+# live card came back with `"url": "/offers/x"`, which is a placeholder and
+# a 404 for anyone who clicks the card.
+MIN_OFFER_SLUG_LENGTH = 12
+
 PAGE_SIZE = 20
 REQUEST_DELAY_SECONDS = 0.5  # be a polite, low-frequency caller across a multi-page paginated scrape
 
@@ -163,6 +169,27 @@ def _compose_title(item: dict, *, model: str) -> str:
     return f"{make} {name}".strip()
 
 
+def _offer_url(item: dict) -> str:
+    """The ad's own address, or one rebuilt from its id when it has none.
+
+    AutoScout24 normally sends a full slug path. One card in a live run
+    sent `/offers/x` instead - a dead link on a real 34.600 EUR listing,
+    and one that survived every later scrape because the parser had no
+    reason to distrust it. The id-only form redirects to the canonical
+    slug (checked against the live site: `/offers/x` 404s, `/offers/{id}`
+    answers 200 and lands on the full page), so a card is never a dead
+    link and the slug it redirects to carries the colour too.
+    """
+    path = (item.get("url") or "").strip()
+    listing_id = str(item.get("id") or "").strip()
+    slug = path.rsplit("/", 1)[-1]
+    if path.startswith("/") and len(slug) >= MIN_OFFER_SLUG_LENGTH:
+        return "https://www.autoscout24.com" + path
+    if listing_id:
+        return f"https://www.autoscout24.com/offers/{listing_id}"
+    return "https://www.autoscout24.com" + path
+
+
 def parse_item(item: dict, *, model: str) -> RawListing:
     # `or {}` / `or []`, not just a .get default: the default only applies
     # when the key is ABSENT, and a JSON API says "no seller" by sending
@@ -176,7 +203,7 @@ def parse_item(item: dict, *, model: str) -> RawListing:
     vehicle = item.get("vehicle") or {}
 
     # No colour field exists in the response; the offer slug carries it.
-    url = "https://www.autoscout24.com" + (item.get("url") or "")
+    url = _offer_url(item)
 
     return RawListing(
         source="autoscout24",

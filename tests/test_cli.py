@@ -1104,3 +1104,52 @@ def test_export_titles_rows_stored_before_the_never_empty_guarantee(isolated_db,
     cli.cmd_export(argparse.Namespace(out=str(out)))
     payload = json.loads(out.read_text())
     assert payload["listings"][0]["titleRaw"] == "Tesla Model Y"
+
+
+def _dated(first_registration: date | None, model_year: int | None) -> RawListing:
+    return RawListing(
+        source="autoscout24",
+        source_listing_id="typo",
+        model="model_y",
+        country="DE",
+        url="https://example.test/typo",
+        price_original=40_000.0,
+        currency_original="EUR",
+        mileage_km=20_000,
+        model_year=model_year,
+        first_registration=first_registration,
+        title_raw="Long Range AWD",
+        photo_urls=[],
+    )
+
+
+def test_a_rejected_date_takes_its_chassis_with_it(isolated_db):
+    """The date guard clears a value it judges not believable. Kept with an
+    `or` like the other fields, a chassis derived from that same date
+    outlived the rejection - a slipped digit reading 2032 left "juniper" on
+    a car whose stored dates no longer said anything at all."""
+    now = utc_now()
+    with session_scope(get_engine(isolated_db)) as session:
+        cli._upsert(session, _dated(date(2025, 9, 1), 2025), rates_to_eur={"EUR": 1.0}, observed_at=now)
+    with session_scope(get_engine(isolated_db)) as session:
+        assert session.get(Listing, "autoscout24:typo").chassis_gen == "juniper"
+
+    with session_scope(get_engine(isolated_db)) as session:
+        cli._upsert(session, _dated(date(2032, 9, 1), 2032), rates_to_eur={"EUR": 1.0}, observed_at=now)
+    with session_scope(get_engine(isolated_db)) as session:
+        listing = session.get(Listing, "autoscout24:typo")
+        assert listing.first_registration is None, "the impossible date is rejected"
+        assert listing.chassis_gen is None, "and the generation derived from it goes too"
+
+
+def test_silence_about_the_date_leaves_the_chassis_alone(isolated_db):
+    """Only the source SAYING something clears it - a card that omits the
+    field must not blank out a generation already established."""
+    now = utc_now()
+    with session_scope(get_engine(isolated_db)) as session:
+        cli._upsert(session, _dated(date(2025, 9, 1), 2025), rates_to_eur={"EUR": 1.0}, observed_at=now)
+        cli._upsert(session, _dated(None, None), rates_to_eur={"EUR": 1.0}, observed_at=now)
+    with session_scope(get_engine(isolated_db)) as session:
+        listing = session.get(Listing, "autoscout24:typo")
+        assert listing.chassis_gen == "juniper"
+        assert listing.first_registration == date(2025, 9, 1)

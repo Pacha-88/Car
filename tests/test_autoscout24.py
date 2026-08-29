@@ -6,6 +6,7 @@ import pytest
 from car_tracker.sources.autoscout24 import (
     AutoScout24Source,
     _extract_page_props,
+    _offer_url,
     _parse_km,
     _parse_month_year,
     _parse_power_kw,
@@ -252,3 +253,30 @@ def test_a_page_where_nothing_parses_is_an_error_not_an_empty_page(monkeypatch):
     )
     with pytest.raises(RuntimeError, match="none could be read"):
         source.fetch_listings(model="model_y", country="DE")
+
+
+# --- a card must never be a dead link --------------------------------------
+
+
+def test_a_full_offer_path_is_used_as_sent():
+    item = {"url": "/offers/tesla-model-y-long-range-awd-electric-white-cat_ma51520mo75320-abc", "id": "u"}
+    assert _offer_url(item) == "https://www.autoscout24.com" + item["url"]
+
+
+def test_a_placeholder_path_is_rebuilt_from_the_listing_id():
+    """One live card sent `/offers/x` - a 404 on a real 34.600 EUR listing,
+    which survived every later scrape because the parser had no reason to
+    distrust it. The id-only form redirects to the canonical slug."""
+    item = {"url": "/offers/x", "id": "eaa83b9c-ea2f-4cd7-a277-25c7bd909ebe"}
+    assert _offer_url(item) == "https://www.autoscout24.com/offers/eaa83b9c-ea2f-4cd7-a277-25c7bd909ebe"
+
+
+def test_a_missing_path_is_rebuilt_too():
+    for missing in (None, "", "   "):
+        item = {"url": missing, "id": "eaa83b9c-ea2f-4cd7-a277-25c7bd909ebe"}
+        assert _offer_url(item).endswith("/offers/eaa83b9c-ea2f-4cd7-a277-25c7bd909ebe")
+
+
+def test_parse_item_carries_the_rebuilt_url_through():
+    listing = parse_item({"id": "eaa83b9c-ea2f-4cd7-a277-25c7bd909ebe", "url": "/offers/x"}, model="model_y")
+    assert listing.url == "https://www.autoscout24.com/offers/eaa83b9c-ea2f-4cd7-a277-25c7bd909ebe"

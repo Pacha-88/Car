@@ -5,13 +5,22 @@ codenames: Model 3's refresh is "Highland" (international deliveries from
 ~late 2023), Model Y's is "Juniper" (international deliveries from ~early-
 mid 2025). "Legacy" means pre-refresh for either model.
 
-The cutover dates below are best-effort placeholders from public delivery-
-start knowledge, NOT verified against real listing data yet (this sandbox
-currently has no network access to the listing sites — see project README).
-Treat them as a starting point to sanity-check once real listings come in:
-actual EU market availability lagged initial delivery announcements by
-weeks to months and varies by country, and sites may express "model year"
-differently (registration year vs. Tesla's own model-year label).
+The cutover dates below started as best-effort placeholders from public
+delivery-start knowledge. Checked since against 621 live listings, and
+they hold: every ad that names its own generation lands on the generation
+the date rule gives it - Highland at 2023-12 and 2024-08, Juniper at
+2025-09 - and Model Y registrations either side of 2025-03-01 split
+cleanly, legacy in January and February, Juniper from March.
+
+"Facelift" is deliberately not a refresh hint. German ads use it for the
+2021 Model 3 update (heat pump, chrome delete) as readily as for
+Highland, so five of the six ads carrying the word are pre-refresh cars
+from 2021 and 2023; reading it as a codename would have moved them all.
+
+Still worth re-checking if a market is added: EU availability lagged
+initial delivery announcements by weeks to months and varies by country,
+and sites may express "model year" differently (registration year vs.
+Tesla's own model-year label).
 """
 
 from __future__ import annotations

@@ -22,6 +22,7 @@ from car_tracker.db.models import FxRate, Listing, ListingSnapshot
 from car_tracker.db.session import init_db, session_scope
 from car_tracker.fx.ecb import fetch_latest_rates
 from car_tracker.normalize.chassis import detect_chassis
+from car_tracker.normalize.color import color_from_autoscout24_url
 from car_tracker.normalize.currency import EUR, market_currency, to_eur
 from car_tracker.normalize.features import has_fsd
 from car_tracker.normalize.registration import plausible_registration
@@ -541,7 +542,16 @@ def cmd_export(args: argparse.Namespace) -> None:
                     "sellerType": listing.seller_type,
                     "location": listing.location,
                     "powerKw": listing.power_kw,
-                    "color": listing.color,
+                    # Falls back to the colour AutoScout24 encodes in its own
+                    # offer slug, for the same reason ensure_title above has a
+                    # fallback: a listing is written in full only the first
+                    # time it is seen, so every row stored before this project
+                    # could read a colour holds null until its site serves it
+                    # again. 596 AutoScout24 rows were in exactly that state
+                    # and 517 of them have a colour sitting in the URL beside
+                    # them. Returns None for every other source's URL shape,
+                    # so it cannot invent one.
+                    "color": listing.color or color_from_autoscout24_url(listing.url),
                     "firstSeenAt": listing.first_seen_at.isoformat(),
                     "priceEur": latest.price_eur,
                     # The seller's own number, in the seller's own currency.
@@ -690,7 +700,6 @@ def _upsert(
         # to store no title at all) and why a listing first seen without
         # photos never got one: fixing the source alone would only have
         # helped cars first listed after the fix.
-        listing.chassis_gen = chassis_gen or listing.chassis_gen
         listing.variant = variant or listing.variant
         listing.power_kw = raw.power_kw or listing.power_kw
         listing.color = raw.color or listing.color
@@ -705,6 +714,17 @@ def _upsert(
         if raw.first_registration is not None or raw.model_year is not None:
             listing.first_registration = first_registration
             listing.model_year = model_year
+            # What was derived FROM the date follows the date. Kept with an
+            # `or` like the other fields, a generation computed from a date
+            # the line above has just judged not believable outlives the
+            # rejection: the row goes on asserting a chassis nothing left in
+            # it supports, and a slipped digit reading 2030 leaves "juniper"
+            # on a 2022 car for as long as the ad carries the typo. A title
+            # that names its own generation still wins, since detect_chassis
+            # reads that before it reads any date.
+            listing.chassis_gen = chassis_gen
+        else:
+            listing.chassis_gen = chassis_gen or listing.chassis_gen
         listing.seller_type = raw.seller_type or listing.seller_type
 
     session.add(
