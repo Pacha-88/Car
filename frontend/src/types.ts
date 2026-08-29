@@ -62,6 +62,11 @@ export interface MarketDay {
    * on both that day and the one before. Unlike the median, it cannot be
    * moved by cheap cars arriving or expensive ones selling. */
   index: number;
+  /** How many cars backed the step into this day. Zero means the index was
+   * HELD for want of overlap, not that these cars sat still - a window of
+   * nothing but zeroes has no measurement in it, however flat it looks.
+   * Optional: an export written before this field has none. */
+  matchedPairs?: number;
 }
 
 export const SOURCE_LABELS: Record<string, string> = {

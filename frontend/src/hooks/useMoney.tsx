@@ -37,12 +37,22 @@ export function MoneyProvider({ hufPerEur, children }: { hufPerEur: number | nul
       hufPerEur,
       format: (v) => formatMoney(v, currency, hufPerEur),
       formatListingAmount: (listing, amount) => {
-        const moved = Math.abs(amount.original) || Math.abs(amount.eur);
-        if (listing.currencyOriginal === currency) return formatAmount(moved, currency);
-        // Into euros first, so formatMoney's own conversion lands back in
-        // the ad's currency when that is the one being displayed.
-        const inEur = listing.currencyOriginal === "HUF" && hufPerEur ? moved / hufPerEur : moved;
-        return formatMoney(inEur, currency, hufPerEur);
+        // The ad's own currency is the honest unit for a price move: the
+        // two euro figures behind `amount.eur` were converted on different
+        // days, so their difference carries the rate as well as the
+        // seller's decision. `|| eur` covers a row stored before originals
+        // were kept.
+        const own = Math.abs(amount.original) || Math.abs(amount.eur);
+        if (listing.currencyOriginal === currency) return formatAmount(own, currency);
+        if (listing.currencyOriginal === "HUF") {
+          // Forints on a screen showing euros. With no rate stored there is
+          // nothing to convert with, and handing the forint figure to a
+          // euro formatter prints a 1,2M Ft cut as "1.200.000 €" - out by
+          // the exchange rate itself. Fall back to the euro delta, exactly
+          // as formatListing falls back to priceEur.
+          return formatMoney(hufPerEur ? own / hufPerEur : Math.abs(amount.eur), currency, hufPerEur);
+        }
+        return formatMoney(own, currency, hufPerEur);
       },
       formatListing: (listing) =>
         listing.currencyOriginal === currency && typeof listing.priceOriginal === "number"

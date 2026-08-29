@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from datetime import date
 from statistics import median
 
-from car_tracker.analysis.listing_status import has_price
+from car_tracker.analysis.listing_status import is_usable_price
 from car_tracker.db.models import ListingSnapshot
 
 # Below this many cars a daily median is noise, and below this many matched
@@ -66,7 +66,7 @@ def price_points(snapshots: list[ListingSnapshot]) -> list[PricePoint]:
     points: list[PricePoint] = []
     previous: tuple[str, float] | None = None
     for snapshot in sorted(snapshots, key=lambda s: s.observed_at):
-        if not has_price(snapshot):
+        if not is_usable_price(snapshot):
             continue
         asked = (snapshot.currency_original, snapshot.price_original)
         if asked == previous:
@@ -90,9 +90,15 @@ class MarketDay:
     p25_eur: float
     p75_eur: float
     n: int
-    #: 100 on the first day with enough data; moves only by the median price
-    #: change of cars present on both that day and the one before.
+    #: 100 on the first day with enough data; moves only by the price
+    #: changes of cars present on both that day and the one before.
     index: float
+    #: How many cars backed the step INTO this day. Zero on the first day,
+    #: and on any day whose overlap with the one before was too thin to
+    #: measure - there the index is HELD, not measured, and a reader told
+    #: "0,0%" would hear "these cars did not move" when the truth is that
+    #: nobody knows. Carried so the dashboard can tell the two apart.
+    matched_pairs: int
 
 
 def _quartiles(values: list[float]) -> tuple[float, float]:
@@ -114,7 +120,7 @@ def market_history(
     by_day: dict[tuple[str, date], dict[str, tuple[float, float]]] = defaultdict(dict)
     for snapshot in snapshots:
         model = model_of.get(snapshot.listing_id)
-        if model is None or not has_price(snapshot):
+        if model is None or not is_usable_price(snapshot):
             continue
         # One snapshot per listing per day: a day scraped twice would
         # otherwise weight those cars double in the median.
@@ -148,8 +154,10 @@ def market_history(
                 # stays put, so the next good day is chained against the
                 # last good one rather than against a fragment.
                 continue
+            pairs = 0
             if previous_day is not None:
-                index *= _step(by_day[(model, previous_day)], cars)
+                step, pairs = _step(by_day[(model, previous_day)], cars)
+                index *= step
             previous_day = day
             prices = [eur for eur, _ in cars.values()]
             low, high = _quartiles(prices)
@@ -162,13 +170,19 @@ def market_history(
                     p75_eur=high,
                     n=len(prices),
                     index=index,
+                    matched_pairs=pairs,
                 )
             )
     return out
 
 
-def _step(before: dict[str, tuple[float, float]], after: dict[str, tuple[float, float]]) -> float:
-    """The average price ratio of the cars listed on both days.
+def _step(before: dict[str, tuple[float, float]], after: dict[str, tuple[float, float]]) -> tuple[float, int]:
+    """The average price ratio of the cars listed on both days, and how many.
+
+    The count comes back with the ratio because a step of exactly 1.0 means
+    two different things - "these cars held their prices" and "there were
+    no cars to look at" - and only the caller can say which the reader
+    needs to hear.
 
     Only these cars can say anything about a price MOVE; a car that arrived
     or sold between the two days says something about the mix instead. The
@@ -197,5 +211,5 @@ def _step(before: dict[str, tuple[float, float]], after: dict[str, tuple[float, 
     ]
     usable = [r for r in ratios if 0.5 <= r <= 2.0]
     if len(usable) < MIN_MATCHED_PAIRS:
-        return 1.0  # not enough overlap to claim a move; hold the index flat
-    return math.exp(sum(math.log(r) for r in usable) / len(usable))
+        return 1.0, 0  # not enough overlap to claim a move; hold the index flat
+    return math.exp(sum(math.log(r) for r in usable) / len(usable)), len(usable)

@@ -11,20 +11,44 @@ from datetime import date, datetime
 from car_tracker.db.models import ListingSnapshot
 
 
-def has_price(snapshot: ListingSnapshot) -> bool:
-    """Whether this snapshot actually recorded a price.
+# Marketplaces carry entries that aren't cars: referral links, accessory
+# ads, deposit placeholders. A real one showed up as a 1 EUR "Tesla
+# Empfehlungslink 1.000 Freikilometer" and, being a listing like any other,
+# it entered the median price, the trend fit and the depreciation curve.
+# No used Tesla sells for four figures, so a floor separates them cleanly
+# without risking a real bargain (the cheapest genuine car in the same
+# dataset was ~21.000 EUR).
+MIN_PLAUSIBLE_PRICE_EUR = 3_000
 
-    A zero is not a price. Nothing stores one deliberately, but a source
-    that cannot find the number on a card falls back to it - AutoScout24's
-    parser reads `priceRaw or 0` - and an unreadable price is a gap in the
-    record, not a decision by the seller. Left in, one such row splits an
-    unbroken run in two and reports a price held for ten days as held for
-    four; `price_points` reads it as a seller who dropped to nothing.
 
-    Shared with analysis/price_history.py so the two answers to "when did
-    this price start" cannot drift apart.
+def is_plausible_car(price_eur: float) -> bool:
+    """False for entries too cheap to be an actual used Tesla."""
+    return price_eur >= MIN_PLAUSIBLE_PRICE_EUR
+
+
+def is_usable_price(snapshot: ListingSnapshot) -> bool:
+    """Whether this snapshot recorded a price a car could actually have.
+
+    Two ways it might not. A zero is not a price: nothing stores one
+    deliberately, but a source that cannot find the number on a card falls
+    back to it - AutoScout24's parser reads `priceRaw or 0` - and an
+    unreadable price is a gap in the record, not a decision by the seller.
+    And a euro is not a price either, it is a referral link; the export has
+    always dropped those listings whole, but the readers below used to
+    count them anyway, so an ad that is not a car sat in the market median
+    and the quartiles it never appeared in the grid beside.
+
+    Left in, either kind splits an unbroken run in two - reporting a price
+    held for ten days as held for four - and reads to `price_points` as a
+    seller who dropped to nothing.
+
+    Shared by all three readers so the answers to "when did this price
+    start", "what has this seller done" and "what is the market doing"
+    cannot drift apart.
     """
-    return bool(snapshot.price_original and snapshot.price_original > 0 and snapshot.price_eur > 0)
+    if not snapshot.price_original or snapshot.price_original <= 0:
+        return False
+    return snapshot.price_eur > 0 and is_plausible_car(snapshot.price_eur)
 
 
 def days_at_current_price(snapshots: list[ListingSnapshot], *, as_of: datetime) -> int:
@@ -46,7 +70,7 @@ def days_at_current_price(snapshots: list[ListingSnapshot], *, as_of: datetime) 
     """
     if not snapshots:
         raise ValueError("no snapshots to compute a price duration from")
-    ordered = [s for s in sorted(snapshots, key=lambda s: s.observed_at) if has_price(s)]
+    ordered = [s for s in sorted(snapshots, key=lambda s: s.observed_at) if is_usable_price(s)]
     if not ordered:
         return 0
     current = (ordered[-1].currency_original, ordered[-1].price_original)

@@ -73,13 +73,21 @@ export function MarketTrendChart({ history, model }: MarketTrendChartProps) {
     if (days.length < 2) return null;
     const first = days[0];
     const last = days[days.length - 1];
+    const measured = days.slice(1).some((d) => d.matchedPairs === undefined || d.matchedPairs > 0);
     return {
       median: first.medianEur > 0 ? last.medianEur / first.medianEur - 1 : null,
       // Moved only by cars listed on both of two consecutive days, so
       // arrivals and sales cannot move it. Usually the more honest of the
       // two, and the reason it is shown next to the median rather than
       // instead of it.
-      index: first.index > 0 ? last.index / first.index - 1 : null,
+      //
+      // null, not 0, when nothing in the window was measured: a thin
+      // market, or a gap over which the whole fleet turned over, leaves
+      // every step held at 1.0, and a flat index that nothing backs
+      // reports "0,0%" - a claim that these cars did not move, made
+      // without a single car to say it about. An export from before the
+      // count existed is trusted, since it cannot say otherwise.
+      index: measured && first.index > 0 ? last.index / first.index - 1 : null,
       fromEur: first.medianEur,
       toEur: last.medianEur,
     };
@@ -179,8 +187,14 @@ export function MarketTrendChart({ history, model }: MarketTrendChartProps) {
             )}
           </span>
           <span className="ml-auto text-xs text-muted">
-            <span className={`numeral font-medium ${toneFor(move?.index)}`}>{percent(move?.index)}</span> counting only
-            cars on sale the whole time
+            {move && move.index === null ? (
+              "too few cars on sale throughout to tell what they did"
+            ) : (
+              <>
+                <span className={`numeral font-medium ${toneFor(move?.index)}`}>{percent(move?.index)}</span> counting
+                only cars on sale the whole time
+              </>
+            )}
           </span>
         </div>
 

@@ -233,3 +233,46 @@ def test_a_lasting_drop_in_coverage_is_absorbed_rather_than_freezing_the_chart()
     assert reported[:6] == [1, 2, 3, 4, 5, 6]
     assert reported[-1] == 16, "reporting must resume at the new level"
     assert len(reported) > 6
+
+
+def test_an_index_held_for_want_of_overlap_says_so():
+    """A step of 1.0 means two different things - "these cars held their
+    prices" and "there were no cars to look at". Reported as a flat index
+    with nothing to distinguish them, a market climbing 1000 a day showed
+    "+0,0% counting only cars on sale the whole time"."""
+    model_of: dict[str, str] = {}
+    snaps: list = []
+    for day in range(1, 7):
+        for i in range(6):  # a fleet that turns over completely every day
+            listing_id = f"d{day}_{i}"
+            model_of[listing_id] = "model_3"
+            snaps.append(_snap(listing_id, day, 30000.0 + day * 1000))
+
+    days = market_history(snaps, model_of=model_of)
+    assert [d.median_eur for d in days] == [31000.0, 32000.0, 33000.0, 34000.0, 35000.0, 36000.0]
+    assert all(d.index == 100.0 for d in days), "held flat, correctly"
+    assert all(d.matched_pairs == 0 for d in days), "and the reason is carried out with it"
+
+
+def test_a_measured_step_reports_how_many_cars_backed_it():
+    model_of = {f"c{i}": "model_y" for i in range(10)}
+    snaps = [_snap(f"c{i}", 1, 40000.0) for i in range(10)] + [_snap(f"c{i}", 2, 38000.0) for i in range(10)]
+    days = market_history(snaps, model_of=model_of)
+    assert [d.matched_pairs for d in days] == [0, 10]
+
+
+def test_a_referral_link_is_not_a_car_in_the_market_median():
+    """The export has always dropped these listings whole - a 1 EUR "Tesla
+    Empfehlungslink" is not a used car - but the market readers counted
+    them anyway, so an entry that never appeared in the grid sat in the
+    median and the quartiles beside it."""
+    model_of = {f"c{i}": "model_y" for i in range(9)}
+    model_of["link"] = "model_y"
+    snaps = [_snap(f"c{i}", 1, 40000.0) for i in range(9)] + [_snap("link", 1, 1.0)]
+    days = market_history(snaps, model_of=model_of)
+    assert [(d.n, d.median_eur) for d in days] == [(9, 40000.0)]
+
+
+def test_a_car_that_reads_as_a_euro_for_one_scrape_has_not_been_given_away():
+    snaps = [_snap("a", 1, 40000.0), _snap("a", 2, 1.0), _snap("a", 3, 39000.0)]
+    assert [p.price_eur for p in price_points(snaps)] == [40000.0, 39000.0]
