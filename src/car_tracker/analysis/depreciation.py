@@ -1,4 +1,13 @@
-"""Depreciation-by-model-year: mileage-normalized price by age bucket, plus
+"""THE SHIPPING COPY OF THIS LOGIC IS frontend/src/lib/depreciation.ts.
+
+The dashboard computes its curve in the browser from the exported JSON;
+this module is the reference implementation the numbers were designed and
+tested against, and tests/test_depreciation.py pins them. A change to the
+bucketing, the IQR method or the mileage normalization must land in BOTH,
+or the tests here go green while the dashboard quietly does something
+else (a numeric parity harness caught exactly one such divergence).
+
+Depreciation-by-model-year: mileage-normalized price by age bucket, plus
 the auto-computed insight cards from DASHBOARD_SPEC.md.
 
 Reasonable defaults chosen for a first pass, all easy to override per call:
@@ -34,8 +43,15 @@ def age_in_years(first_registration: date, *, as_of: date) -> float:
 
 
 def age_bucket_index(age_years: float, *, max_bucket: int = 7) -> int:
-    """0 = under 1yr, 1 = 1yr, ..., max_bucket = the max_bucket+ catch-all."""
-    return min(int(age_years), max_bucket)
+    """0 = under 1yr, 1 = 1yr, ..., max_bucket = the max_bucket+ catch-all.
+
+    Clamped below at 0: a slightly future-dated registration (tolerated by
+    the plausibility guard's one-day slack) is an under-1-year car, not a
+    negative bucket. int() already truncates -0.3 to 0, but only by
+    accident of rounding toward zero - past a full future year it would
+    produce -1 - so the clamp states the intent.
+    """
+    return min(max(int(age_years), 0), max_bucket)
 
 
 def age_bucket_label(bucket_index: int, *, max_bucket: int = 7) -> str:

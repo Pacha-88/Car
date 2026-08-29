@@ -53,7 +53,14 @@ export function ageInYears(firstRegistration: Date, asOf: Date): number {
 }
 
 export function ageBucketIndex(ageYears: number, maxBucket = 7): number {
-  return Math.min(Math.floor(ageYears), maxBucket);
+  // Clamped below at 0: a slightly future-dated registration (the
+  // plausibility guard deliberately allows one day of slack for
+  // month-granularity sources and a UTC runner) has a negative age, and
+  // Math.floor would give it bucket -1 - which ageBucketLabel renders as a
+  // literal "-1yr", a bucket that was never designed to exist. A car
+  // registered "tomorrow" is an under-1-year car. (The Python prototype
+  // agreed by accident: int() truncates toward zero.)
+  return Math.min(Math.max(Math.floor(ageYears), 0), maxBucket);
 }
 
 export function ageBucketLabel(bucketIndex: number, maxBucket = 7): string {

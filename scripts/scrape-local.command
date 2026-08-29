@@ -35,13 +35,30 @@ xattr -d com.apple.quarantine "$SELF" 2>/dev/null || true
 # nyugdijaz semmit), de az egyik futas ertelmetlen "duplicate key" hibaval
 # all meg. Egyszerubb meg sem engedni.
 LOCK="$SCRIPT_DIR/.scrape-local.lock"
-if ! mkdir "$LOCK" 2>/dev/null; then
+acquire_lock() {
+  mkdir "$LOCK" 2>/dev/null && { echo $$ > "$LOCK/pid"; return 0; }
+  # Van egy zar. Egy osszeomlott futas (lefagyott gep, aramszunet, kilott
+  # folyamat) is itt hagyja: olyankor az EXIT trap sosem futott le, es a
+  # zar nelkule orokre ott maradna - a cron pedig minden reggel neman,
+  # "mar fut" hivatkozassal lepne ki, azaz egyetlen rossz nap vegleg
+  # megallitana a napi futast. Ezert a zar a tulajdonos PID-jet hordozza:
+  # ha az a folyamat mar nem el, a zar gazdatlan, es atvesszuk.
+  local pid
+  pid="$(cat "$LOCK/pid" 2>/dev/null)"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    return 1  # tenyleg fut most is
+  fi
+  rm -rf "$LOCK"
+  mkdir "$LOCK" 2>/dev/null && { echo $$ > "$LOCK/pid"; return 0; }
+  return 1  # ket atvevo versenyzett, a masik nyert - az is egy elo futas
+}
+if ! acquire_lock; then
   echo "Már fut egy scrape ebből a mappából (zár: $LOCK)."
   echo "Ha biztosan nem fut, töröld a mappát és indítsd újra."
   [ "${1:-}" != "auto" ] && read -r -p "Nyomj Entert a kilépéshez..." _
   exit 0
 fi
-trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+trap 'rm -rf "$LOCK" 2>/dev/null' EXIT INT TERM HUP
 
 # --- uv telepítése, ha még nincs ---
 if ! command -v uv >/dev/null 2>&1; then

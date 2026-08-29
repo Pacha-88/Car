@@ -183,3 +183,17 @@ def test_single_listing_bucket_collapses_band_to_the_point():
     for bucket in buckets:
         assert bucket.n == 1
         assert bucket.p25_price_eur == bucket.median_price_eur == bucket.p75_price_eur
+
+
+def test_a_future_dated_registration_lands_in_the_under_1yr_bucket_not_a_negative_one():
+    """The plausibility guard deliberately lets a registration date run one
+    day ahead (month-granularity sources, UTC runner). A negative age must
+    clamp to bucket 0: the TS copy's Math.floor gave it bucket -1, which
+    the label function rendered as a literal "-1yr" tab on the dashboard.
+    Pinned here on the reference copy; a numeric parity harness holds the
+    two implementations together."""
+    assert age_bucket_index(-0.003) == 0
+    assert age_bucket_index(-1.5) == 0
+    assert age_bucket_index(0.0) == 0
+    assert age_bucket_index(0.99) == 0
+    assert age_bucket_index(1.0) == 1
