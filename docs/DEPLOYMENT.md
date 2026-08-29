@@ -68,6 +68,7 @@ only as far as each site forces it (see `sources/fetch.py`):
    (far less detectable than a bundled headless shell), automation flags
    off, and a persistent profile so a solved Cloudflare challenge's
    clearance cookie carries over to the next page and the next day.
+3. A **visible** browser, and then 4. **your own** Chrome — both below.
 
 The GitHub Actions run can't do this from a datacenter IP, so those two
 sources run from your machine instead:
@@ -80,7 +81,7 @@ It scrapes only those two sources and writes to the same database, so the
 two runs never disturb each other's data — neither retires the other's
 listings just by not having looked at them.
 
-**If a site still shows a challenge**, the last lever is a *visible*
+**If a site still shows a challenge**, the next lever is a *visible*
 browser you can help:
 
 ```
@@ -88,14 +89,44 @@ CAR_TRACKER_HEADED=1 ~/Desktop/scrape-local.command
 ```
 
 A real Chrome window opens on the page. If it asks you to verify you're
-human, **solve it in that window** — the run waits up to two minutes for
-you, and because the browser uses a persistent profile, the clearance
-cookie it earns is reused by later *headless* runs. So this is normally a
-one-time thing per site, not a permanent manual step.
+human, **solve it in that window** — the run waits up to five minutes for
+you (a live run saw Cloudflare show the block first and only produce the
+"verify you are human" widget minutes later), and because the browser
+uses a persistent profile, the clearance cookie it earns is reused by
+later *headless* runs. So this is normally a one-time thing per site, not
+a permanent manual step. Closing the window skips that one site and the
+run carries on with the rest.
 
-These are enterprise-grade defenses, so it stays best-effort: if even a
-visible browser is refused, that site may not be scriptable from your
-setup, and the dashboard keeps working with the other sources.
+**If you get a hard block instead** — "Sorry, you have been blocked",
+with nothing on the page to solve — the run says so and prints where it
+saved the page. One check tells you which kind it is: **open the site in
+your normal, everyday browser.**
+
+- *Blocked there too* → the site is refusing your connection itself. No
+  scraper setting talks it round; it usually lifts on its own in a day or
+  two, and the dashboard keeps working with the other sources.
+- *Loads fine there* → only the automated browser is being singled out.
+  The mac launcher then offers the last rung: drive **the Chrome you run
+  yourself**. It opens a separate Chrome window, you load the page (and
+  solve anything it asks) by hand, and the scrape uses that same window.
+  Every rung above is an automated browser imitating an ordinary one;
+  this one is an ordinary one. It opens its own tab and closes it after,
+  never touching yours, and it detaches at the end rather than quitting
+  your window. Manually, that is:
+
+  ```
+  # quit Chrome first
+  open -na "Google Chrome" --args --remote-debugging-port=9222 \
+    --user-data-dir="$HOME/.cache/car-tracker/chrome-cdp-profile"
+  CAR_TRACKER_CHROME_CDP=http://localhost:9222 car-tracker scrape-local
+  ```
+
+  (The separate `--user-data-dir` isn't optional: since Chrome 136 remote
+  debugging is refused on the default profile.)
+
+These are enterprise-grade defenses, so it stays best-effort: if even
+your own browser is refused, that site isn't scriptable from your setup
+today, and the dashboard keeps working with the other sources.
 
 ### Why these two sources are pickier than the others
 

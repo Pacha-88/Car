@@ -275,6 +275,27 @@ def cmd_scrape_local(args: argparse.Namespace) -> None:
     _run_scrape(targets, max_pages=args.max_pages, label="scrape-local")
 
 
+# The last line of defence for retirement. Every guard above keys off a
+# source *reporting* trouble — but the worst failures are the quiet ones: a
+# throttle page served with HTTP 200 and no ads on it, a markup change that
+# suddenly matches nothing, a site answering with an empty result set. Those
+# all look like a perfectly successful scrape that happened to find no cars,
+# and would retire an entire marketplace.
+#
+# Used cars do not all sell overnight. A run that wants to retire more than
+# half of a source's active listings is describing an event that doesn't
+# happen, so refuse it and say so loudly rather than quietly emptying the
+# dashboard. The listings stay active and simply get picked up again on the
+# next healthy run; a genuinely sold-out market just takes a few days to
+# drain instead of one.
+MAX_RETIREMENT_SHARE = 0.5
+
+# Below this many active listings the share is noise, not signal — a market
+# with three cars in it can legitimately lose two in a day. The cap only
+# applies once a source is big enough for percentages to mean something.
+MIN_ACTIVE_FOR_RETIREMENT_CAP = 10
+
+
 def _retire_unseen(
     run_started_at: datetime, *, sources: dict[str, dict[str, list[str]]], skip_sources: set[str]
 ) -> dict[str, int]:
@@ -331,27 +352,6 @@ def _retire_unseen(
             session.execute(update(Listing).where(*unseen_where).values(is_active=False))
             retired[source_name] = unseen
     return retired
-
-
-# The last line of defence for retirement. Every guard above keys off a
-# source *reporting* trouble — but the worst failures are the quiet ones: a
-# throttle page served with HTTP 200 and no ads on it, a markup change that
-# suddenly matches nothing, a site answering with an empty result set. Those
-# all look like a perfectly successful scrape that happened to find no cars,
-# and would retire an entire marketplace.
-#
-# Used cars do not all sell overnight. A run that wants to retire more than
-# half of a source's active listings is describing an event that doesn't
-# happen, so refuse it and say so loudly rather than quietly emptying the
-# dashboard. The listings stay active and simply get picked up again on the
-# next healthy run; a genuinely sold-out market just takes a few days to
-# drain instead of one.
-MAX_RETIREMENT_SHARE = 0.5
-
-# Below this many active listings the share is noise, not signal — a market
-# with three cars in it can legitimately lose two in a day. The cap only
-# applies once a source is big enough for percentages to mean something.
-MIN_ACTIVE_FOR_RETIREMENT_CAP = 10
 
 
 # Marketplaces carry entries that aren't cars: referral links, accessory

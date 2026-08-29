@@ -406,3 +406,114 @@ def test_an_attached_browser_gets_its_own_tab_and_keeps_the_persons_tabs(monkeyp
     assert their_tab.closed is False
     ours = [p for p in theirs if p.mine]
     assert len(ours) == 1 and ours[0].closed, "our tab is opened for the fetch and cleaned up after"
+
+
+def test_closing_the_window_skips_one_site_not_the_rest_of_the_run(monkeypatch):
+    """Closing the last tab of a persistent context closes the browser with
+    it. Since closing the window is how a person says "skip this stubborn
+    one", every later URL used to die on the dead context - one skip took
+    the whole run with it."""
+    launches = {"n": 0}
+    first = {"ctx": None}
+
+    class _Page:
+        def __init__(self, ctx, body):
+            self.ctx, self.body, self.closed = ctx, body, False
+
+        def goto(self, url, **kw):
+            if self.ctx.dead:
+                raise RuntimeError("browser has been closed")
+            return type("R", (), {"status": 200})()
+
+        def content(self):
+            if self.ctx.dead:
+                raise RuntimeError("browser has been closed")
+            return self.body
+
+        def is_closed(self):
+            return self.closed or self.ctx.dead
+
+        def close(self):
+            self.closed = True
+
+        def wait_for_timeout(self, _ms):
+            if first["ctx"] is self.ctx:  # the person shuts this window
+                self.ctx.dead = True
+                self.ctx.pages.clear()
+
+    class _Context:
+        def __init__(self, body):
+            self.dead = False
+            self.pages = [_Page(self, body)]
+
+        def add_init_script(self, _s):
+            return None
+
+        def new_page(self):
+            if self.dead:
+                raise RuntimeError("browser has been closed")
+            page = _Page(self, LISTINGS_HTML)
+            self.pages.append(page)
+            return page
+
+        def close(self):
+            self.dead = True
+
+    def _launch(_playwright, *, headed):
+        launches["n"] += 1
+        ctx = _Context(CHALLENGE_HTML if launches["n"] == 1 else LISTINGS_HTML)
+        if launches["n"] == 1:
+            first["ctx"] = ctx
+        return ctx
+
+    _install_fake_playwright(monkeypatch)
+    monkeypatch.setattr(fetch, "_launch_browser", _launch)
+    monkeypatch.setattr(fetch, "_HEADED_SOLVE_SECONDS", 1)
+    monkeypatch.setenv("CAR_TRACKER_HEADED", "1")
+    monkeypatch.delenv(fetch._CDP_ENV_VAR, raising=False)
+
+    fetch._fetch_with_browser("https://a.example/1", accept_language="en", timeout=1)
+    status, _ = fetch._fetch_with_browser("https://b.example/2", accept_language="en", timeout=1)
+
+    assert status == 200, "the next site must still be fetchable after a window is closed"
+    assert launches["n"] == 2, "a browser that went away is replaced, not reused as a dead handle"
+
+
+def test_an_attached_chrome_counts_as_someone_watching(monkeypatch):
+    """The attached-Chrome path exists so a person can solve a challenge in
+    their own window. Reading only CAR_TRACKER_HEADED gave it the twelve
+    second "nobody is watching" wait and printed no instructions - the one
+    thing that path is for."""
+    monkeypatch.delenv("CAR_TRACKER_HEADED", raising=False)
+    monkeypatch.setenv(fetch._CDP_ENV_VAR, "http://localhost:9222")
+    assert fetch.headed_mode() is True
+
+    monkeypatch.delenv(fetch._CDP_ENV_VAR, raising=False)
+    assert fetch.headed_mode() is False
+
+
+def test_a_borrowed_browser_is_not_patched_behind_its_owners_back(monkeypatch):
+    """The stealth script hides navigator.webdriver on a browser we drive.
+    On the person's own Chrome it would apply to pages they open for
+    themselves — and there is nothing to hide there anyway, since nothing
+    automated it."""
+    scripts = []
+
+    class _Context:
+        pages: list = []
+
+        def add_init_script(self, s):
+            scripts.append(s)
+
+        def new_page(self):
+            raise AssertionError("not reached")
+
+        def close(self):
+            return None
+
+    _install_fake_playwright(monkeypatch)
+    monkeypatch.setattr(fetch, "_connect_to_your_own_chrome", lambda _pw, _e: _mark_cdp(_Context()))
+    monkeypatch.setenv(fetch._CDP_ENV_VAR, "http://localhost:9222")
+
+    fetch._shared_context(headed=True)
+    assert scripts == [], "nothing gets injected into a context we only borrowed"

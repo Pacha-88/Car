@@ -135,9 +135,22 @@ def _browser_profile_dir() -> Path:
     return profile
 
 
+def attached_to_own_chrome() -> bool:
+    """Whether this run drives a Chrome the person started themselves."""
+    return bool(os.environ.get(_CDP_ENV_VAR, "").strip())
+
+
 def headed_mode() -> bool:
-    """Whether to show a real window a person can interact with."""
-    return os.environ.get("CAR_TRACKER_HEADED", "").strip().lower() in ("1", "true", "yes")
+    """Whether there is a real window a person can interact with.
+
+    An attached browser counts. It is the person's own Chrome, on their own
+    screen, started by them a moment ago - so a challenge in it is one they
+    can see and solve. Reading only CAR_TRACKER_HEADED here meant the
+    attached-Chrome path, whose whole purpose is a person solving a
+    challenge, silently used the twelve-second "nobody is watching" wait
+    and printed no instructions.
+    """
+    return os.environ.get("CAR_TRACKER_HEADED", "").strip().lower() in ("1", "true", "yes") or attached_to_own_chrome()
 
 
 # One browser for the whole run, not one per page. A run fetches dozens of
@@ -167,7 +180,12 @@ def _shared_context(headed: bool):
     except Exception:
         playwright.stop()
         raise
-    context.add_init_script(_STEALTH_INIT)
+    if not endpoint:
+        # Only patch a browser we launched. On an attached one the script
+        # would be injected into the person's own context, changing pages
+        # they open for themselves - and it is pointless there anyway: a
+        # browser nobody automated has no navigator.webdriver to hide.
+        context.add_init_script(_STEALTH_INIT)
     _SESSION["playwright"] = playwright
     _SESSION["context"] = context
     _SESSION["headed"] = headed
@@ -298,10 +316,32 @@ def _first_page(context):
     the real one - which is exactly what a person watching a headed run
     sees and has no way to interpret.
     """
-    for page in context.pages:
-        if not page.is_closed():
-            return page
+    try:
+        for page in context.pages:
+            if not page.is_closed():
+                return page
+    except Exception:
+        pass  # the browser is gone; new_page() below will say so properly
     return context.new_page()
+
+
+def _open_page(headed: bool):
+    """Return (borrowed, page), restarting a browser that went away.
+
+    Closing the last tab of a persistent context closes the browser with
+    it. Since "close the window" is how a person skips one stubborn site,
+    that must not also mean "skip every site after it" - which is exactly
+    what happened: every later URL died on the closed context.
+    """
+    for attempt in (1, 2):
+        context = _shared_context(headed)
+        borrowed = _SESSION.get("cdp_browser") is not None
+        try:
+            return borrowed, (context.new_page() if borrowed else _first_page(context))
+        except Exception:
+            if attempt == 2:
+                raise
+            close_browser()  # window gone - drop the dead handle and start fresh
 
 
 def _fetch_with_browser(url: str, *, accept_language: str, timeout: float) -> tuple[int, str]:
@@ -317,7 +357,7 @@ def _fetch_with_browser(url: str, *, accept_language: str, timeout: float) -> tu
 
     headed = headed_mode()
     try:
-        context = _shared_context(headed)
+        borrowed, page = _open_page(headed)
     except Exception as exc:
         # Playwright is installed but no usable browser binary is - the
         # normal state right after `pip install playwright`. Its own error
@@ -330,12 +370,11 @@ def _fetch_with_browser(url: str, *, accept_language: str, timeout: float) -> tu
             f"(original error: {str(exc).splitlines()[0]})"
         ) from exc
 
-    # When the browser is ours we navigate its one tab from URL to URL, the
-    # way a person browsing would. When it is the person's own Chrome
-    # (rung 4), their tabs are theirs: open a new one and close it after,
-    # rather than navigating whatever they were reading out from under them.
-    borrowed = _SESSION.get("cdp_browser") is not None
-    page = context.new_page() if borrowed else _first_page(context)
+    # `borrowed` above says whose browser this is. When it is ours we
+    # navigate its one tab from URL to URL, the way a person browsing
+    # would. When it is the person's own Chrome (rung 4), their tabs are
+    # theirs: a new one, closed after, rather than navigating whatever they
+    # were reading out from under them.
     try:
         response = page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
         status = response.status if response else 0

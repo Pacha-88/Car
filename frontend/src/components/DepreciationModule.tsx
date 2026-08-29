@@ -274,7 +274,7 @@ export function DepreciationModule({ listings }: DepreciationModuleProps) {
       </div>
 
       <p className="mt-3 border-t border-border pt-2 text-[10px] leading-relaxed text-muted">
-        Prices are adjusted to the compare-at mileage using one linear €/km rate fit across the current selection, so
+        Prices are adjusted to the compare-at mileage using one linear price-per-km rate fit across the current selection, so
         they move with the slider above and are not what any specific car actually sold for. This compares different
         cars on one day rather than tracking one over time, and these are asking prices, not sale prices. There is no
         "new list price" reference here (no source in this project provides Tesla's new-car pricing) — percentages are

@@ -1,17 +1,6 @@
-const eurFormatter = new Intl.NumberFormat("de-DE", {
-  style: "currency",
-  currency: "EUR",
-  maximumFractionDigits: 0,
-});
-
-export function formatEur(value: number): string {
-  return eurFormatter.format(value);
-}
-
-export function formatEurSigned(value: number): string {
-  const sign = value > 0 ? "+" : "";
-  return `${sign}${eurFormatter.format(value)}`;
-}
+// Money formatting lives in lib/money.ts, which has to know the display
+// currency; leaving a second euro-only formatter here would be an easy way
+// to reintroduce a price the currency toggle silently doesn't reach.
 
 const numberFormatter = new Intl.NumberFormat("de-DE");
 

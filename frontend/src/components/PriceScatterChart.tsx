@@ -141,7 +141,20 @@ export function PriceScatterChart({
                 <g
                   style={{ cursor: "pointer" }}
                   onClick={() => window.open(p.payload.listing.url, "_blank", "noopener")}
-                  onMouseEnter={() => setActive({ point: p.payload, x: p.cx, y: p.cy })}
+                  // Keep the existing state object when the same mark is
+                  // already active, so React can bail out of the render.
+                  // Storing a fresh object every time spun a loop: the
+                  // re-render replaced this <g>'s children, the new node
+                  // appeared under the motionless cursor, that fired
+                  // mouseenter again, and so on ~15x a second for as long
+                  // as the pointer rested on a dot.
+                  onMouseEnter={() =>
+                    setActive((cur) =>
+                      cur?.point.listing.id === p.payload.listing.id
+                        ? cur
+                        : { point: p.payload, x: p.cx, y: p.cy },
+                    )
+                  }
                   onMouseLeave={() => setActive((cur) => (cur?.point.listing.id === p.payload.listing.id ? null : cur))}
                 >
                   <circle cx={p.cx} cy={p.cy} r={HIT_RADIUS} fill="transparent" pointerEvents="all" />
