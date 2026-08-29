@@ -1,12 +1,14 @@
-import { useMemo, useState } from "react";
+import { memo, useMemo, useRef, useState, type MouseEvent } from "react";
 import {
   CartesianGrid,
+  Customized,
   Line,
   ComposedChart,
   ResponsiveContainer,
-  Scatter,
   XAxis,
   YAxis,
+  useXAxisScale,
+  useYAxisScale,
 } from "recharts";
 import { binnedMedianTrend } from "../lib/trend";
 import { isOlderBucket, yearColor, yearLegendEntries } from "../lib/colors";
@@ -68,7 +70,37 @@ export function PriceScatterChart({
   // different prices both showed whichever one Recharts picked for that x -
   // the "wrong photo on hover" report. Anchoring to the mark the cursor is
   // actually over is the only way to make the card always match the dot.
+  //
+  // And it is tracked by ONE handler on the container, not one per mark.
+  // At live scale this chart draws 2.000+ points; per-mark <g> handlers
+  // meant hovering re-rendered every mark (the ring was part of each
+  // mark's render) and cost ~2 seconds per hover. The marks render once
+  // per data change and record their pixel positions; the container's
+  // mousemove finds the nearest recorded mark, and the ring and card are
+  // overlays that never touch the chart itself.
   const [active, setActive] = useState<{ point: ScatterPoint; x: number; y: number } | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  // One stable map for the marks' pixel positions; DotsLayer rewrites it in
+  // full on every chart render, so it always matches what is on screen.
+  const [positions] = useState(() => new Map<string, { cx: number; cy: number; point: ScatterPoint }>());
+
+  const nearestMark = (e: MouseEvent) => {
+    const svg = wrapRef.current?.querySelector("svg.recharts-surface");
+    if (!svg) return null;
+    const rect = svg.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    let best: { cx: number; cy: number; point: ScatterPoint } | null = null;
+    let bestDistance = HIT_RADIUS; // >= 24px hit target, same as the old per-mark circle
+    for (const mark of positions.values()) {
+      const d = Math.hypot(mark.cx - x, mark.cy - y);
+      if (d <= bestDistance) {
+        bestDistance = d;
+        best = mark;
+      }
+    }
+    return best;
+  };
 
   const trend = useMemo(
     () => binnedMedianTrend(points.map((p) => [p.mileageKm, p.priceEur] as [number, number]), 10_000),
@@ -95,108 +127,58 @@ export function PriceScatterChart({
 
       {/* `relative` anchors the hover card, which is positioned from the
           hovered mark's own SVG coordinates. */}
-      <div className="relative" onMouseLeave={() => setActive(null)}>
-      <ResponsiveContainer width="100%" height={420}>
-        <ComposedChart margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
-          <CartesianGrid stroke="var(--gridline)" strokeDasharray="0" vertical={false} />
-          <XAxis
-            dataKey="mileageKm"
-            type="number"
-            name="Mileage"
-            tickFormatter={(v: number) => `${Math.round(v / 1000)}k`}
-            stroke="var(--baseline)"
-            tick={{ fill: "var(--text-muted)", fontSize: 11 }}
-            label={{ value: "Mileage (km)", position: "insideBottom", offset: -4, fill: "var(--text-muted)", fontSize: 11 }}
-          />
-          <YAxis
-            dataKey="priceEur"
-            type="number"
-            name="Price"
-            tickFormatter={money.formatTick}
-            stroke="var(--baseline)"
-            tick={{ fill: "var(--text-muted)", fontSize: 11 }}
-            width={money.axisWidth}
-          />
-          {showTrendLine && (
-            <Line
-              data={trendData}
-              dataKey="priceEur"
-              xAxisId={0}
-              type="monotone"
-              stroke="var(--text-secondary)"
-              strokeWidth={2}
-              strokeDasharray="5 4"
-              dot={false}
-              isAnimationActive={false}
-              legendType="none"
-            />
-          )}
-          <Scatter
-            data={points}
-            dataKey="priceEur"
-            isAnimationActive={false}
-            shape={(props: unknown) => {
-              const p = props as { cx: number; cy: number; payload: ScatterPoint };
-              const isWatchlisted = watchlist.has(p.payload.listing.id);
-              const isActive = active?.point.listing.id === p.payload.listing.id;
-              return (
-                <g
-                  style={{ cursor: "pointer" }}
-                  onClick={() => window.open(p.payload.listing.url, "_blank", "noopener")}
-                  // Keep the existing state object when the same mark is
-                  // already active, so React can bail out of the render.
-                  // Storing a fresh object every time spun a loop: the
-                  // re-render replaced this <g>'s children, the new node
-                  // appeared under the motionless cursor, that fired
-                  // mouseenter again, and so on ~15x a second for as long
-                  // as the pointer rested on a dot.
-                  onMouseEnter={() =>
-                    setActive((cur) =>
-                      cur?.point.listing.id === p.payload.listing.id
-                        ? cur
-                        : { point: p.payload, x: p.cx, y: p.cy },
-                    )
-                  }
-                  onMouseLeave={() => setActive((cur) => (cur?.point.listing.id === p.payload.listing.id ? null : cur))}
-                >
-                  <circle cx={p.cx} cy={p.cy} r={HIT_RADIUS} fill="transparent" pointerEvents="all" />
-                  {isWatchlisted && (
-                    <circle
-                      cx={p.cx}
-                      cy={p.cy}
-                      r={DOT_RADIUS + 3}
-                      fill="none"
-                      stroke="var(--series-1)"
-                      strokeWidth={2}
-                    />
-                  )}
-                  {/* Ring on the hovered mark, so it's unmistakable which dot
-                      the card belongs to. */}
-                  {isActive && (
-                    <circle
-                      cx={p.cx}
-                      cy={p.cy}
-                      r={DOT_RADIUS + 5}
-                      fill="none"
-                      stroke="var(--text-primary)"
-                      strokeWidth={2}
-                    />
-                  )}
-                  <circle
-                    cx={p.cx}
-                    cy={p.cy}
-                    r={DOT_RADIUS}
-                    fill={p.payload.older ? "none" : p.payload.color}
-                    stroke={p.payload.older ? p.payload.color : "var(--surface-1)"}
-                    strokeWidth={2}
-                  />
-                </g>
-              );
-            }}
-          />
-        </ComposedChart>
-      </ResponsiveContainer>
+      <div
+        ref={wrapRef}
+        className="relative"
+        style={{ cursor: active ? "pointer" : undefined }}
+        onMouseLeave={() => setActive(null)}
+        onMouseMove={(e) => {
+          const mark = nearestMark(e);
+          // Keep the existing state object for the mark that is already
+          // active, so React can bail out - a fresh object per move once
+          // spun a render loop under a motionless cursor.
+          setActive((cur) => {
+            if (!mark) return null;
+            return cur?.point.listing.id === mark.point.listing.id
+              ? cur
+              : { point: mark.point, x: mark.cx, y: mark.cy };
+          });
+        }}
+        onClick={(e) => {
+          const mark = nearestMark(e);
+          if (mark) window.open(mark.point.listing.url, "_blank", "noopener");
+        }}
+      >
+      <ChartBody
+        points={points}
+        trendData={trendData}
+        showTrendLine={showTrendLine}
+        watchlist={watchlist}
+        formatTick={money.formatTick}
+        axisWidth={money.axisWidth}
+        positions={positions}
+      />
 
+        {active && (
+          <svg
+            className="pointer-events-none absolute z-10"
+            style={{ left: active.x - DOT_RADIUS - 7, top: active.y - DOT_RADIUS - 7 }}
+            width={(DOT_RADIUS + 7) * 2}
+            height={(DOT_RADIUS + 7) * 2}
+          >
+            {/* Ring on the hovered mark, so it's unmistakable which dot the
+                card belongs to - drawn as an overlay precisely so hovering
+                never re-renders the 2.000-mark chart underneath. */}
+            <circle
+              cx={DOT_RADIUS + 7}
+              cy={DOT_RADIUS + 7}
+              r={DOT_RADIUS + 5}
+              fill="none"
+              stroke="var(--text-primary)"
+              strokeWidth={2}
+            />
+          </svg>
+        )}
         {active && (
           <div
             className="pointer-events-none absolute z-10"
@@ -221,6 +203,146 @@ export function PriceScatterChart({
     </div>
   );
 }
+
+/** The Recharts subtree, memoized: 2.000+ marks make it the expensive part
+ * of the page, and nothing about hovering may touch it. It re-renders only
+ * when the data, the watchlist, the trend toggle or the currency changes.
+ * Marks record their pixel positions into `positions` as they render, which
+ * is what the container's single mousemove handler searches. */
+const ChartBody = memo(function ChartBody({
+  points,
+  trendData,
+  showTrendLine,
+  watchlist,
+  formatTick,
+  axisWidth,
+  positions,
+}: {
+  points: ScatterPoint[];
+  trendData: { mileageKm: number; priceEur: number }[];
+  showTrendLine: boolean;
+  watchlist: Set<string>;
+  formatTick: (v: number) => string;
+  axisWidth: number;
+  positions: Map<string, { cx: number; cy: number; point: ScatterPoint }>;
+}) {
+  // Explicit domains: the dots are no longer a Recharts series (see below),
+  // so the axes cannot infer their extent. Rounded up to the tick rhythm
+  // the automatic domain used to produce.
+  const xMax = useMemo(() => {
+    const top = Math.max(...points.map((p) => p.mileageKm), 1);
+    return Math.ceil(top / 25_000) * 25_000;
+  }, [points]);
+  const yMax = useMemo(() => {
+    const top = Math.max(...points.map((p) => p.priceEur), 1);
+    return Math.ceil(top / 5_000) * 5_000;
+  }, [points]);
+  return (
+    <ResponsiveContainer width="100%" height={420}>
+        <ComposedChart margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
+          <CartesianGrid stroke="var(--gridline)" strokeDasharray="0" vertical={false} />
+          <XAxis
+            dataKey="mileageKm"
+            type="number"
+            domain={[0, xMax]}
+            allowDataOverflow
+            name="Mileage"
+            tickFormatter={(v: number) => `${Math.round(v / 1000)}k`}
+            stroke="var(--baseline)"
+            tick={{ fill: "var(--text-muted)", fontSize: 11 }}
+            label={{ value: "Mileage (km)", position: "insideBottom", offset: -4, fill: "var(--text-muted)", fontSize: 11 }}
+          />
+          <YAxis
+            dataKey="priceEur"
+            type="number"
+            domain={[0, yMax]}
+            allowDataOverflow
+            name="Price"
+            tickFormatter={formatTick}
+            stroke="var(--baseline)"
+            tick={{ fill: "var(--text-muted)", fontSize: 11 }}
+            width={axisWidth}
+          />
+          {showTrendLine && (
+            <Line
+              data={trendData}
+              dataKey="priceEur"
+              xAxisId={0}
+              type="monotone"
+              stroke="var(--text-secondary)"
+              strokeWidth={2}
+              strokeDasharray="5 4"
+              dot={false}
+              isAnimationActive={false}
+              legendType="none"
+            />
+          )}
+          {/* The dots. NOT a Recharts <Scatter>: that renders one React
+              element per mark, and at live scale (2.000+ cars) every filter
+              click paid for building and reconciling all of them - measured
+              at ~3s per toggle. All dots of one colour are one merged <path>
+              instead (six paths total), positioned straight off the axis
+              scales; per-dot hit-testing lives in the container's single
+              mousemove handler via the `positions` map filled here. */}
+          <Customized component={DotsLayer} points={points} watchlist={watchlist} positions={positions} />
+        </ComposedChart>
+    </ResponsiveContainer>
+  );
+});
+
+
+/** The dots. NOT a Recharts <Scatter>: that renders one React element per
+ * mark, and at live scale (2.000+ cars) every filter click paid for
+ * building and reconciling all of them - measured at ~3s per toggle. All
+ * dots of one colour are one merged <path> instead (six paths total),
+ * positioned straight off the axis scales; per-dot hit-testing lives in
+ * the container's single mousemove handler via the `positions` map filled
+ * here as a render side effect (recomputed on every chart render, so it
+ * always matches what is on screen). */
+function DotsLayer({
+  points,
+  watchlist,
+  positions,
+}: {
+  points: ScatterPoint[];
+  watchlist: Set<string>;
+  positions: Map<string, { cx: number; cy: number; point: ScatterPoint }>;
+}) {
+  const xScale = useXAxisScale();
+  const yScale = useYAxisScale();
+  if (!xScale || !yScale) return null;
+  const solid = new Map<string, string[]>();
+  const hollow = new Map<string, string[]>();
+  const watchRings: { cx: number; cy: number }[] = [];
+  positions.clear();
+  for (const point of points) {
+    const cx = xScale(point.mileageKm);
+    const cy = yScale(point.priceEur);
+    if (cx === undefined || cy === undefined) continue;
+    positions.set(point.listing.id, { cx, cy, point });
+    const r = DOT_RADIUS;
+    const d = `M ${cx - r} ${cy} a ${r} ${r} 0 1 0 ${r * 2} 0 a ${r} ${r} 0 1 0 ${-r * 2} 0`;
+    const bucket = point.older ? hollow : solid;
+    const paths = bucket.get(point.color);
+    if (paths) paths.push(d);
+    else bucket.set(point.color, [d]);
+    if (watchlist.has(point.listing.id)) watchRings.push({ cx, cy });
+  }
+  return (
+    <g>
+      {[...solid.entries()].map(([color, ds]) => (
+        <path key={color} d={ds.join(" ")} fill={color} stroke="var(--surface-1)" strokeWidth={2} />
+      ))}
+      {[...hollow.entries()].map(([color, ds]) => (
+        <path key={`h-${color}`} d={ds.join(" ")} fill="none" stroke={color} strokeWidth={2} />
+      ))}
+      {watchRings.map((ring, i) => (
+        <circle key={i} cx={ring.cx} cy={ring.cy} r={DOT_RADIUS + 3} fill="none" stroke="var(--series-1)" strokeWidth={2} />
+      ))}
+    </g>
+  );
+}
+
 
 function YearLegend({ years, maxYear }: { years: number[]; maxYear: number }) {
   const entries = yearLegendEntries(years, maxYear);
