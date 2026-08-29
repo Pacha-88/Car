@@ -357,8 +357,20 @@ def cmd_scrape_local(args: argparse.Namespace) -> None:
     Run this from an ordinary residential connection, pointed at the same
     DATABASE_URL the scheduled run uses. It touches only its own sources,
     so it never disturbs what the scheduled run collected — and vice versa.
+
+    `--source` narrows it to one of them. The wrapper script uses that when
+    it retries a hard block through the person's own Chrome: without it the
+    retry re-scraped everything, including the source that had just worked
+    and the six hundred Hungarian pages that had just been fetched.
     """
-    targets = {name: SCRAPE_TARGETS[name] for name in DATACENTER_BLOCKED_SOURCES}
+    wanted = args.source or list(DATACENTER_BLOCKED_SOURCES)
+    unknown = [name for name in wanted if name not in DATACENTER_BLOCKED_SOURCES]
+    if unknown:
+        raise SystemExit(
+            f"scrape-local covers {', '.join(DATACENTER_BLOCKED_SOURCES)}; "
+            f"{', '.join(unknown)} belongs to scrape-all"
+        )
+    targets = {name: SCRAPE_TARGETS[name] for name in wanted}
     _run_scrape(targets, max_pages=args.max_pages, label="scrape-local")
 
 
@@ -720,6 +732,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_scrape_local.add_argument(
         "--max-pages", type=int, default=None, help="cap result pages fetched per combo (default: no cap)"
+    )
+    p_scrape_local.add_argument(
+        "--source",
+        action="append",
+        choices=list(DATACENTER_BLOCKED_SOURCES),
+        help="only this source (repeatable); default is all of them",
     )
     p_scrape_local.set_defaults(func=cmd_scrape_local)
 

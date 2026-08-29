@@ -130,25 +130,48 @@ fi
 CHROME_APP="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 CHROME_PROFILE="$HOME/.cache/car-tracker/chrome-cdp-profile"
 if [ "$RESULT" -ne 0 ] && grep -q "hard block page" "$LOG" 2>/dev/null && [ -x "$CHROME_APP" ]; then
+  # MELYIK oldal blokkolt? A futas a blokkolo oldalt elmenti
+  # "last-blocked-<host>.html" neven, es ezt kiirja - ez a legmegbizhatobb
+  # jel. Enelkul a szkript mindig a Hasznaltauto-t nyitotta meg, akkor is,
+  # amikor a Tesla blokkolt: a felhasznalo betoltott egy magyar oldalt,
+  # aztan a scrape a tesla.com-ot probalta rajta keresztul - es persze
+  # ugyanugy blokkba futott. Rossz oldalt megoldani nem segit semmit.
+  BLOCKED_HOST="$(grep -oE 'last-blocked-[A-Za-z0-9.-]+\.html' "$LOG" 2>/dev/null | head -n1 | sed -E 's/^last-blocked-//; s/\.html$//')"
+  case "$BLOCKED_HOST" in
+    *tesla*)         CDP_URL="https://www.tesla.com/de_DE/inventory/used/my"; CDP_SOURCE="tesla" ;;
+    *hasznaltauto*)  CDP_URL="https://www.hasznaltauto.hu/szemelyauto/tesla/model_y"; CDP_SOURCE="hasznaltauto" ;;
+    *)               CDP_URL="https://www.hasznaltauto.hu/szemelyauto/tesla/model_y"; CDP_SOURCE="" ;;
+  esac
   echo
-  echo "Egy oldal az automata böngészőt is elutasította (kemény blokk)."
+  echo "Egy oldal az automata böngészőt is elutasította (kemény blokk):"
+  echo "  ${BLOCKED_HOST:-ismeretlen oldal}"
   echo "Megpróbálhatjuk a saját Chrome-oddal: megnyílik egy külön Chrome-ablak,"
-  echo "abban kézzel betöltöd az oldalt (és megoldod a human-checket, ha kér),"
+  echo "abban kézzel betöltöd EZT az oldalt (és megoldod a human-checket, ha kér),"
   echo "utána a scrape ugyanazt az ablakot használja."
   read -r -p "Kipróbáljuk? (i/n): " TRY_CDP
   if [ "$TRY_CDP" = "i" ] || [ "$TRY_CDP" = "I" ]; then
     mkdir -p "$CHROME_PROFILE"
-    CDP_URL="https://www.hasznaltauto.hu/szemelyauto/tesla/model_y"
     "$CHROME_APP" --remote-debugging-port=9222 --user-data-dir="$CHROME_PROFILE" "$CDP_URL" >/dev/null 2>&1 &
     echo
-    echo "Megnyílt egy Chrome-ablak. Nézd meg benne az oldalt:"
+    echo "Megnyílt egy Chrome-ablak ezen: $CDP_URL"
     echo "  - ha human-checket kér, oldd meg;"
     echo "  - ha ott is 'Sorry, you have been blocked' jön, akkor a hálózatodat"
     echo "    tiltja a site, ezen a scraper nem tud segíteni (pár nap múlva feloldódik)."
     read -r -p "Ha kész az oldal, nyomj Entert (a Chrome-ablakot hagyd nyitva)..." _
     export CAR_TRACKER_CHROME_CDP=http://localhost:9222
-    uv tool run --from "$FROM_SPEC" car-tracker scrape-local 2>&1 | tee "$LOG"
+    # Csak azt a forrast probaljuk ujra, amelyik blokkolt. Enelkul az
+    # ujraprobalas mindent ujraszedett - azt is, ami az elobb sikerult, es
+    # a hatszaz magyar oldalt is, amit epp most toltottunk le.
+    RETRY_LOG="$SCRIPT_DIR/scrape-local-retry.log"
+    if [ -n "$CDP_SOURCE" ]; then
+      uv tool run --from "$FROM_SPEC" car-tracker scrape-local --source "$CDP_SOURCE" 2>&1 | tee "$RETRY_LOG"
+    else
+      uv tool run --from "$FROM_SPEC" car-tracker scrape-local 2>&1 | tee "$RETRY_LOG"
+    fi
     RESULT=${PIPESTATUS[0]}
+    echo
+    echo "A Chrome-ablakot most már bezárhatod (távoli debuggolással fut,"
+    echo "ne hagyd nyitva feleslegesen)."
   fi
 fi
 

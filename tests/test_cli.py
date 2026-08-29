@@ -301,9 +301,48 @@ def test_scrape_local_runs_only_the_datacenter_blocked_sources(isolated_db, monk
         },
     )
 
-    cli.cmd_scrape_local(argparse.Namespace(max_pages=None))
+    cli.cmd_scrape_local(argparse.Namespace(max_pages=None, source=None))
 
     assert attempted == ["blocked"]
+
+
+def test_scrape_local_can_be_narrowed_to_one_source(isolated_db, monkeypatch):
+    """The wrapper retries a hard block through the person's own Chrome.
+
+    Without this it re-ran everything: the source that had just succeeded,
+    and the six hundred Hungarian pages that had just been fetched - more
+    requests at exactly the moment a site has started refusing them.
+    """
+    attempted: list[str] = []
+
+    class _RecordingSource(_FakeOkSource):
+        def fetch_listings(self, *, model: str, country: str, max_pages: int | None = None):
+            attempted.append(self.name)
+            return []
+
+    monkeypatch.setattr(cli, "fetch_latest_rates", lambda: (date(2026, 8, 28), {"HUF": 0.0025}))
+    monkeypatch.setattr(cli, "DATACENTER_BLOCKED_SOURCES", ("one", "two"))
+    monkeypatch.setattr(
+        cli,
+        "SOURCES",
+        {"one": type("A", (_RecordingSource,), {"name": "one"}),
+         "two": type("B", (_RecordingSource,), {"name": "two"})},
+    )
+    monkeypatch.setattr(
+        cli,
+        "SCRAPE_TARGETS",
+        {"one": {"models": ["model_y"], "countries": ["DE"]},
+         "two": {"models": ["model_y"], "countries": ["HU"]}},
+    )
+
+    cli.cmd_scrape_local(argparse.Namespace(max_pages=None, source=["two"]))
+    assert attempted == ["two"]
+
+
+def test_scrape_local_refuses_a_source_that_is_not_its_own(isolated_db, monkeypatch):
+    monkeypatch.setattr(cli, "DATACENTER_BLOCKED_SOURCES", ("one",))
+    with pytest.raises(SystemExit, match="belongs to scrape-all"):
+        cli.cmd_scrape_local(argparse.Namespace(max_pages=None, source=["autoscout24"]))
 
 
 def test_scheduled_run_never_retires_what_the_local_run_collected(isolated_db, monkeypatch):
