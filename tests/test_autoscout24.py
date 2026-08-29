@@ -194,3 +194,61 @@ def test_the_colour_and_the_url_come_from_the_same_string():
     assert raw.color == "grey"
     assert raw.url.endswith("/offers/tesla-model-y-x-electric-grey-cat_ma51520mo75320-abc-1")
     assert raw.url.startswith("https://www.autoscout24.com")
+
+
+# --- a null-valued field is not a missing one -----------------------------
+# `.get(key, default)` only applies its default when the key is ABSENT, and
+# a JSON API says "no seller" by sending null just as readily as by leaving
+# the field out. Five of these crashed the parser - and the parse happens
+# outside the page guard, so one bad card cost the whole combo, every page
+# already collected included. Tesla's per-market shape drift, again.
+
+_HEALTHY_ITEM = {
+    "id": "x",
+    "url": "/offers/tesla-model-y-white-cat_ma51520mo75320-abc",
+    "price": {"priceRaw": 40000},
+    "vehicleDetails": [{"iconName": "calendar", "data": "03/2024"}],
+    "vehicle": {"modelVersionInput": "Long Range"},
+    "location": {"countryCode": "DE", "city": "Berlin"},
+    "images": ["https://x/1.jpg"],
+    "seller": {"type": "dealer"},
+}
+
+
+@pytest.mark.parametrize(
+    "field", ["images", "vehicleDetails", "location", "vehicle", "price", "seller", "url"]
+)
+def test_a_null_valued_field_does_not_crash_the_parser(field):
+    raw = parse_item({**_HEALTHY_ITEM, field: None}, model="model_y")
+    assert raw.source_listing_id == "x"
+
+
+def test_photo_urls_is_always_a_list_of_strings():
+    """photoUrls: null reaches the dashboard as `listing.photoUrls[0]`,
+    which throws and takes the whole grid down with it."""
+    assert parse_item({**_HEALTHY_ITEM, "images": None}, model="model_y").photo_urls == []
+    assert parse_item({**_HEALTHY_ITEM, "images": ["a", None, "b"]}, model="model_y").photo_urls == ["a", "b"]
+
+
+def test_one_unreadable_card_does_not_cost_the_page(monkeypatch, capsys):
+    source = AutoScout24Source()
+
+    def _one_page(*, model, country, page=1):
+        return {"numberOfPages": 1, "listings": [_HEALTHY_ITEM, "a bare string", {**_HEALTHY_ITEM, "id": "y"}]}
+
+    monkeypatch.setattr(source, "fetch_raw_page", _one_page)
+    listings = source.fetch_listings(model="model_y", country="DE")
+
+    assert [raw.source_listing_id for raw in listings] == ["x", "y"]
+    assert "skipped 1 listing" in capsys.readouterr().out
+
+
+def test_a_page_where_nothing_parses_is_an_error_not_an_empty_page(monkeypatch):
+    """Cards came back and none could be read: the shape has moved. Calling
+    that an empty page would let retirement treat a country as sold."""
+    source = AutoScout24Source()
+    monkeypatch.setattr(
+        source, "fetch_raw_page", lambda **_: {"numberOfPages": 1, "listings": ["nope", "also nope"]}
+    )
+    with pytest.raises(RuntimeError, match="none could be read"):
+        source.fetch_listings(model="model_y", country="DE")

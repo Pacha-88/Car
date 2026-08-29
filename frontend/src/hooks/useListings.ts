@@ -36,7 +36,15 @@ export function useListings(): ListingsState {
       .then((payload) => {
         if (cancelled) return;
         setState({
-          listings: payload.listings,
+          // The payload is a file on a web server, not a value this app
+          // produced: a row stored before the source hardening carries
+          // photoUrls: null, and `listing.photoUrls[0]` on that throws and
+          // takes the whole grid down. Normalised once, here, rather than
+          // optional-chained at each of the four places that read it.
+          listings: (payload.listings ?? []).map((l) => ({
+            ...l,
+            photoUrls: Array.isArray(l.photoUrls) ? l.photoUrls.filter((u) => typeof u === "string") : [],
+          })),
           generatedAt: payload.generatedAt,
           latestScrapeDate: payload.latestScrapeDate,
           // An export written before this field existed simply has no rate.

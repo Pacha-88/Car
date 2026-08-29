@@ -65,6 +65,7 @@ class AutoScout24Source(Source):
 
     def fetch_listings(self, *, model: str, country: str, max_pages: int | None = None) -> list[RawListing]:
         listings: list[RawListing] = []
+        unreadable: tuple[int, str] = (0, "")
         page = 1
         total_pages = 1
         while page <= total_pages and (max_pages is None or page <= max_pages):
@@ -85,13 +86,34 @@ class AutoScout24Source(Source):
                     raise
                 raise PartialResults(listings, f"page {page} failed ({type(exc).__name__}: {exc})") from exc
             total_pages = page_props.get("numberOfPages", 1)
-            items = page_props.get("listings", [])
-            listings.extend(parse_item(item, model=model) for item in items)
+            items = page_props.get("listings") or []
+            kept = 0
+            for item in items:
+                try:
+                    listings.append(parse_item(item, model=model))
+                    kept += 1
+                except Exception as exc:  # noqa: BLE001 - see below
+                    # Outside the page guard above, so before this an odd
+                    # card did not cost its page - it cost the whole combo,
+                    # every page already collected included.
+                    unreadable = (unreadable[0] + 1, f"{type(exc).__name__}: {exc}")
+            if items and not kept:
+                # Cards came back and not one could be read: the response
+                # shape has moved, and reporting it as a clean empty page
+                # would let retirement treat a whole country as sold.
+                raise RuntimeError(
+                    f"page {page} returned {len(items)} listings and none could be read - {unreadable[1]}"
+                )
             if not items:
                 break
             page += 1
             if page <= total_pages:
                 time.sleep(REQUEST_DELAY_SECONDS)
+        if unreadable[0]:
+            print(
+                f"    autoscout24/{model}/{country}: skipped {unreadable[0]} listing(s) this parser could"
+                f" not read ({unreadable[1]}) - kept the other {len(listings)}"
+            )
         return listings
 
     def fetch_raw_page(self, *, model: str, country: str, page: int = 1) -> dict:
@@ -142,12 +164,19 @@ def _compose_title(item: dict, *, model: str) -> str:
 
 
 def parse_item(item: dict, *, model: str) -> RawListing:
-    details = {d["iconName"]: d["data"] for d in item.get("vehicleDetails", [])}
+    # `or {}` / `or []`, not just a .get default: the default only applies
+    # when the key is ABSENT, and a JSON API says "no seller" by sending
+    # null just as readily as by omitting the field. Five of these fields
+    # crashed the parser outright on a null - and one bad card here takes
+    # the whole combo with it, since the parse happens outside the loop's
+    # page guard. Tesla's per-market shape drift was the same lesson.
+    details = {d["iconName"]: d["data"] for d in (item.get("vehicleDetails") or []) if isinstance(d, dict)}
     first_registration = _parse_month_year(details.get("calendar"))
-    country = item.get("location", {}).get("countryCode", "")
+    country = (item.get("location") or {}).get("countryCode") or ""
+    vehicle = item.get("vehicle") or {}
 
     # No colour field exists in the response; the offer slug carries it.
-    url = "https://www.autoscout24.com" + item.get("url", "")
+    url = "https://www.autoscout24.com" + (item.get("url") or "")
 
     return RawListing(
         source="autoscout24",
@@ -155,16 +184,16 @@ def parse_item(item: dict, *, model: str) -> RawListing:
         model=model,
         country=country,
         url=url,
-        price_original=float(item.get("price", {}).get("priceRaw") or 0),
+        price_original=float((item.get("price") or {}).get("priceRaw") or 0),
         currency_original=market_currency(country),
         mileage_km=_parse_km(details.get("mileage_odometer")),
         model_year=first_registration.year if first_registration else None,
         first_registration=first_registration,
-        variant=item.get("vehicle", {}).get("modelVersionInput"),
+        variant=vehicle.get("modelVersionInput"),
         title_raw=_compose_title(item, model=model),
-        photo_urls=item.get("images", []),
-        seller_type=_normalize_seller_type(item.get("seller", {}).get("type")),
-        location=item.get("location", {}).get("city"),
+        photo_urls=[u for u in (item.get("images") or []) if isinstance(u, str)],
+        seller_type=_normalize_seller_type((item.get("seller") or {}).get("type")),
+        location=(item.get("location") or {}).get("city"),
         power_kw=_parse_power_kw(details.get("speedometer")),
         color=color_from_autoscout24_url(url),
     )
