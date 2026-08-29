@@ -406,10 +406,30 @@ def _headed_instructions(url: str, status: int, body: str) -> str:
     )
 
 
+def _save_for_diagnosis(url: str, body: str) -> Path | None:
+    """Keep the page that defeated us.
+
+    A run reported "a white error page" from Tesla, which is not enough to
+    fix anything - the wall could have been Akamai, an expired query, or a
+    real error the API returned. The page itself says which. Overwritten
+    per host, so this never grows.
+    """
+    host = re.sub(r"^https?://([^/]+).*$", r"\1", url)
+    try:
+        path = _browser_profile_dir().parent / f"last-blocked-{host}.html"
+        path.write_text(body, encoding="utf-8")
+        return path
+    except Exception:
+        return None  # diagnosis is a bonus; never fail a run over it
+
+
 def _still_blocked_advice(url: str, status: int, body: str) -> str:
     """What to actually do about it — this runs on a person's own laptop."""
     host = re.sub(r"^https?://([^/]+).*$", r"\1", url)
     lines = [f"  browser: still blocked after waiting ({describe(status, body)})", ""]
+    saved = _save_for_diagnosis(url, body)
+    if saved is not None:
+        lines += [f"  The page itself is saved at {saved} - worth opening if this is unfamiliar.", ""]
     if any(m in body[:4000].lower() for m in _BLOCK_MARKERS):
         lines += [
             "  That is a hard block, not a puzzle - there was nothing on the page to solve.",
