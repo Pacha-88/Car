@@ -108,13 +108,33 @@ _LOCALISED = [
     *((rf"\b\w*?{stem}{_GERMAN_ENDINGS}\b", colour) for stem, colour in _GERMAN_COLORS.items()),
     *((rf"\b\w*?{stem}\w*", colour) for stem, colour in _HUNGARIAN_COLORS.items()),
 ]
-_LOCALISED_RES = [(re.compile(pattern), colour) for pattern, colour in _LOCALISED]
+_ALL_COLOUR_RES = [
+    *((re.compile(rf"\b{base}\b"), _ALIASES.get(base, base)) for base in BASE_COLORS),
+    *((re.compile(pattern), colour) for pattern, colour in _LOCALISED),
+]
 
 # Paint names that spell a colour without a word boundary to find it by.
 # Matching on bare substrings instead would be worse than missing these:
 # "red" alone is inside plenty of words that are not colours. Extend this
 # as new one-word names turn up.
 _WHOLE_NAMES = {"quicksilver": "silver"}
+
+# A colour that belongs to the cabin, not to the paint. Real headlines from
+# the current export: "White Interior", "weißes Interieur", and Tesla's own
+# option names are English even in a German ad - so this catches both
+# vocabularies. Reading either as the car's colour is worse than reading
+# nothing, which is the line this whole module is drawn on.
+_INTERIOR_WORDS = r"interior|interieur|innenraum|innenausstattung|sitze\b|leder|belső|belso|kárpit|karpit|bőr"
+# Directly attached only - whitespace or a hyphen, nothing else. That is
+# what separates "schwarze Ledersitze" (the seats are black) from "weiß mit
+# schwarzem Leder" (the CAR is white and the seats are black), and from
+# "weiß, Lederausstattung", where the comma means the two are a list.
+_CABIN_AFTER = re.compile(rf"^[\s\-]{{1,3}}(?:{_INTERIOR_WORDS})", re.I)
+_CABIN_BEFORE = re.compile(rf"(?:{_INTERIOR_WORDS})[\s\-]{{1,3}}$", re.I)
+
+
+def _describes_the_cabin(text: str, start: int, end: int) -> bool:
+    return bool(_CABIN_AFTER.search(text[end:]) or _CABIN_BEFORE.search(text[:start]))
 
 
 def normalize_color(raw: str | None) -> str | None:
@@ -124,18 +144,19 @@ def normalize_color(raw: str | None) -> str | None:
     text = re.sub(r"[_\-]+", " ", raw.strip().lower())
     if text in _WHOLE_NAMES:
         return _WHOLE_NAMES[text]
-    for base in BASE_COLORS:
-        if re.search(rf"\b{base}\b", text):
-            return _ALIASES.get(base, base)
-    # English first so a paint code or an AutoScout24 slug is never read
-    # through another language's spelling.
+
+    # Leftmost wins across every vocabulary, the same rule normalize_variant
+    # uses: an ad names the car it is selling before it lists what is inside
+    # it. Running English to exhaustion first instead made "White Interior"
+    # beat a German paint word later in the same headline.
     earliest: tuple[int, str] | None = None
-    for pattern, colour in _LOCALISED_RES:
-        match = pattern.search(text)
-        # Leftmost wins, the same rule normalize_variant uses: an ad titles
-        # the car it is selling first and mentions everything else after.
-        if match and (earliest is None or match.start() < earliest[0]):
-            earliest = (match.start(), colour)
+    for pattern, colour in _ALL_COLOUR_RES:
+        for match in pattern.finditer(text):
+            if _describes_the_cabin(text, match.start(), match.end()):
+                continue  # the seats are black, the car is not
+            if earliest is None or match.start() < earliest[0]:
+                earliest = (match.start(), colour)
+            break  # this vocabulary entry cannot beat its own first usable hit
     return earliest[1] if earliest else None
 
 

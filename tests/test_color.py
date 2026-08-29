@@ -93,7 +93,7 @@ def test_an_unrecognisable_url_yields_no_colour(url):
         # that car ads are actually written in.
         ("Performance Dual AWD*LEDER/Weiss*21Zoll*", "white"),
         ("ModelY LongRange Dual AWD Schwarz Schwarz Steuer", "black"),
-        ("Model 3 schwarzer Innenraum", "black"),
+        ("Model 3 schwarz, Sportpaket", "black"),
         ("Model Y rote Bremssättel", "red"),
         ("Model 3 dunkelblau metallic", "blue"),
         ("Model Y tiefschwarz", "black"),
@@ -141,3 +141,47 @@ def test_english_still_wins_over_another_language_s_spelling():
     assert normalize_color("PEARL_WHITE_MULTI_COAT") == "white"
     assert normalize_color("MIDNIGHT_SILVER") == "silver"
     assert normalize_color("quicksilver") == "silver"
+
+
+# --- a colour can belong to the cabin instead of the paint ----------------
+# Three real headlines in the export said white and meant the seats. Two of
+# them were mislabelled by the English vocabulary that predates this work,
+# so the trap was already live; reading German and Hungarian widened it.
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        # Verbatim from the current export.
+        "Tesla Model Y Long Range AWD*Ryzen*White Interior*AHK*",
+        "Model 3 Performance AWD - weißes Interieur",
+        "Standard Range RWD Plus 57,5kWh *WEISSES LEDER*",
+        # The same shape in the other spellings.
+        "Model Y schwarze Ledersitze",
+        "Model 3 Leder schwarz",
+        "Model Y fekete bőrbelső",
+        "Model 3 schwarzer Innenraum",
+    ],
+)
+def test_a_colour_that_names_the_cabin_is_not_the_car_s_colour(title):
+    assert normalize_color(title) is None
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        # Attached directly means the cabin; separated means a list of two
+        # facts about the car, the first of which is its colour.
+        ("Model Y weiß mit schwarzem Leder", "white"),
+        ("Model Y weiß, Lederausstattung", "white"),
+        ("Model Y fehér, bőr belső", "white"),
+    ],
+)
+def test_a_colour_listed_beside_the_upholstery_is_still_the_car_s(title, expected):
+    assert normalize_color(title) == expected
+
+
+def test_the_leftmost_colour_wins_across_both_vocabularies():
+    """Running English to exhaustion first let a later English word beat an
+    earlier German one - which is how "White Interior" outranked the paint."""
+    assert normalize_color("Model Y fehér, Black Package") == "white"
