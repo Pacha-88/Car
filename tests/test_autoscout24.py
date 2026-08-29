@@ -147,3 +147,50 @@ def test_a_failure_on_the_very_first_page_still_raises():
     source = _FlakyPageSource(good_pages=0)
     with pytest.raises(RuntimeError):
         source.fetch_listings(model="model_y", country="IT")
+
+
+# --- colour, read out of the offer slug -----------------------------------
+# The response carries no colour field anywhere, but AutoScout24 builds its
+# slugs as {make}-{model}-{version}-{fuel}-{colour}-cat_ma…mo…-{uuid}. Of 621
+# real listings exactly one had a colour before this, so the dashboard's
+# colour filter offered "Unknown" for 620 cars and "Black" for one.
+
+
+def _item(url: str) -> dict:
+    return {
+        "id": "x",
+        "vehicle": {"make": "Tesla", "model": "Model Y", "modelVersionInput": "Long Range AWD"},
+        "price": {"priceRaw": 30000},
+        "location": {"countryCode": "DE", "city": "Berlin"},
+        "images": [],
+        "vehicleDetails": [],
+        "seller": {"type": "Dealer"},
+        "url": url,
+    }
+
+
+def test_the_colour_comes_out_of_the_slug():
+    raw = parse_item(
+        _item("/offers/tesla-model-y-standard-range-rwd-1-hand-electric-white-cat_ma51520mo75320-abc-1"),
+        model="model_y",
+    )
+    assert raw.color == "white"
+
+
+def test_a_listing_with_no_recorded_colour_stays_unknown():
+    """Then the slug ends in the fuel word instead, and inventing a colour
+    from it would be worse than an honest Unknown."""
+    raw = parse_item(
+        _item("/offers/tesla-model-3-long-range-awd-514pk-electric-cat_ma51520mo74665-abc-1"),
+        model="model_3",
+    )
+    assert raw.color is None
+
+
+def test_the_colour_and_the_url_come_from_the_same_string():
+    """Regression guard: the url is built once and read twice, so a future
+    edit cannot leave the stored link and the colour disagreeing."""
+    raw = parse_item(_item("/offers/tesla-model-y-x-electric-grey-cat_ma51520mo75320-abc-1"), model="model_y")
+    assert raw.color == "grey"
+    assert raw.url.endswith("/offers/tesla-model-y-x-electric-grey-cat_ma51520mo75320-abc-1")
+    assert raw.url.startswith("https://www.autoscout24.com")

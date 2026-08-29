@@ -43,7 +43,18 @@ export function FilterBar({ filters, onChange, modelListings, newCount, watchlis
   const money = useMoney();
   const bounds = dataBounds(modelListings);
   const sourcesPresent = [...new Set(modelListings.map((l) => l.source))];
-  const colorsPresent = [...new Set(modelListings.map((l) => l.color ?? "unknown"))];
+  // Commonest first, Unknown last: the row is data-driven, so insertion
+  // order would otherwise be whatever the export happened to list first.
+  const colorsPresent = (() => {
+    const counts = new Map<string, number>();
+    for (const l of modelListings) {
+      const key = l.color ?? "unknown";
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .sort((a, b) => (a[0] === "unknown" ? 1 : b[0] === "unknown" ? -1 : b[1] - a[1]))
+      .map(([key]) => key);
+  })();
   const chassisOptions = MODEL_CHASSIS_OPTIONS[filters.model] ?? ["legacy", "unknown"];
 
   function set<K extends keyof FilterState>(key: K, value: FilterState[K]) {

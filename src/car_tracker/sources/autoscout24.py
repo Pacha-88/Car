@@ -24,6 +24,7 @@ from datetime import date
 
 import httpx
 
+from car_tracker.normalize.color import color_from_autoscout24_url
 from car_tracker.normalize.currency import market_currency
 from car_tracker.normalize.title import model_display_name
 from car_tracker.sources.base import PartialResults, RawListing, Source
@@ -145,12 +146,15 @@ def parse_item(item: dict, *, model: str) -> RawListing:
     first_registration = _parse_month_year(details.get("calendar"))
     country = item.get("location", {}).get("countryCode", "")
 
+    # No colour field exists in the response; the offer slug carries it.
+    url = "https://www.autoscout24.com" + item.get("url", "")
+
     return RawListing(
         source="autoscout24",
         source_listing_id=item["id"],
         model=model,
         country=country,
-        url="https://www.autoscout24.com" + item.get("url", ""),
+        url=url,
         price_original=float(item.get("price", {}).get("priceRaw") or 0),
         currency_original=market_currency(country),
         mileage_km=_parse_km(details.get("mileage_odometer")),
@@ -162,6 +166,7 @@ def parse_item(item: dict, *, model: str) -> RawListing:
         seller_type=_normalize_seller_type(item.get("seller", {}).get("type")),
         location=item.get("location", {}).get("city"),
         power_kw=_parse_power_kw(details.get("speedometer")),
+        color=color_from_autoscout24_url(url),
     )
 
 

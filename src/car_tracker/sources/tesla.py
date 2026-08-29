@@ -22,6 +22,7 @@ from urllib.parse import urlencode
 
 import httpx
 
+from car_tracker.normalize.color import normalize_color
 from car_tracker.normalize.currency import market_currency
 from car_tracker.normalize.title import model_display_name
 from car_tracker.sources.base import PartialResults, RawListing, Source
@@ -282,7 +283,7 @@ def parse_item(item: dict, *, model: str, country: str) -> RawListing:
         seller_type="tesla",
         location=item.get("City"),
         power_kw=(item.get("EmissionsData") or {}).get("power"),
-        color=paint[0].lower() if paint else None,
+        color=normalize_color(paint[0] if paint else None),
     )
 
 

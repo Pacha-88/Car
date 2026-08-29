@@ -96,8 +96,18 @@ function Dashboard({ data }: { data: ReturnType<typeof useListings> }) {
     return applyFilters(modelListings, filters, watchlist);
   }, [modelListings, filters, watchlist]);
 
+  // Which age buckets are too thin to say anything about is a property of
+  // the MARKET, not of your current filter - so it is measured over the
+  // whole model's listings, exactly as the deal scores above are.
+  //
+  // Measuring it on the filtered subset made every narrow filter empty the
+  // grid: pick a colour with 15 cars and each age bucket holds fewer than
+  // the ten a bucket needs, so all of them count as thin and every car is
+  // hidden. Live numbers on real data: Blue 15 cars -> 0 shown, Silver 5 ->
+  // 0, Red 5 -> 0, while White (83) lost only 8. It reads as "the colour
+  // filter is broken", and it was doing this to every filter.
   const thinBucketIndices = useMemo(() => {
-    const input = preExclusion
+    const input = modelListings
       .filter((l) => l.firstRegistration && l.mileageKm !== null)
       .map((l) => ({
         firstRegistration: new Date(l.firstRegistration as string),
@@ -114,7 +124,7 @@ function Dashboard({ data }: { data: ReturnType<typeof useListings> }) {
     } catch {
       return new Set<number>();
     }
-  }, [preExclusion]);
+  }, [modelListings]);
 
   const displayed = useMemo(() => {
     if (!filters || filters.showExcluded) return preExclusion;
