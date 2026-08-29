@@ -17,14 +17,24 @@ def days_at_current_price(snapshots: list[ListingSnapshot], *, as_of: datetime) 
     Walks back from the latest snapshot while the price is unchanged; the
     result is `as_of` minus the observed_at of the earliest snapshot in
     that unbroken run. `snapshots` need not be pre-sorted.
+
+    "Unchanged" means the price the seller set - `price_original` in its
+    own currency - NOT the EUR conversion. `price_eur` is derived with the
+    day's ECB rate, so for a listing priced in forints it drifts a little
+    every day the rate moves; comparing it made every Használtautó listing
+    read "at this price for 0 days" forever, however long the seller had
+    actually held the price. (Reproduced with a week of real-shaped HUF
+    rates: an unchanged 14.500.000 Ft listing scored 0, the identical
+    EUR-priced car 6.) The currency is part of the comparison so a genuine
+    repricing in a different currency never counts as "the same price".
     """
     if not snapshots:
         raise ValueError("no snapshots to compute a price duration from")
     ordered = sorted(snapshots, key=lambda s: s.observed_at)
-    current_price = ordered[-1].price_eur
+    current = (ordered[-1].currency_original, ordered[-1].price_original)
     held_since = ordered[-1].observed_at
     for snapshot in reversed(ordered):
-        if snapshot.price_eur != current_price:
+        if (snapshot.currency_original, snapshot.price_original) != current:
             break
         held_since = snapshot.observed_at
     return (as_of - held_since).days

@@ -51,3 +51,37 @@ def test_new_since_last_scrape_matches_latest_date():
 def test_not_new_when_first_seen_before_latest_scrape():
     first_seen = datetime(2026, 1, 9, 9, 0, tzinfo=timezone.utc)
     assert is_new_since_last_scrape(first_seen, latest_scrape_date=date(2026, 1, 10)) is False
+
+
+def _huf_snap(days_ago: int, price_ft: float, rate: float) -> ListingSnapshot:
+    return ListingSnapshot(
+        observed_at=datetime(2026, 1, 10, tzinfo=timezone.utc).replace(day=10 - days_ago),
+        price_original=price_ft,
+        currency_original="HUF",
+        price_eur=price_ft * rate,
+        mileage_km=50_000,
+    )
+
+
+def test_a_steady_forint_price_is_not_broken_by_the_daily_fx_rate():
+    """price_eur is derived with the day's ECB rate, so for a HUF-priced
+    listing it drifts a little every day the rate moves. Comparing it made
+    every Használtautó listing read "at this price for 0 days" forever,
+    however long the seller had actually held the price. What "unchanged"
+    means is the seller's own number."""
+    snapshots = [
+        _huf_snap(6, 14_500_000, 0.0027413),
+        _huf_snap(4, 14_500_000, 0.0027389),  # rate moved, seller didn't
+        _huf_snap(2, 14_500_000, 0.0027441),
+        _huf_snap(0, 14_500_000, 0.0027402),
+    ]
+    assert days_at_current_price(snapshots, as_of=AS_OF) == 6
+
+
+def test_a_genuine_forint_price_drop_still_resets_the_clock():
+    snapshots = [
+        _huf_snap(6, 14_900_000, 0.0027413),
+        _huf_snap(2, 14_500_000, 0.0027441),
+        _huf_snap(0, 14_500_000, 0.0027402),
+    ]
+    assert days_at_current_price(snapshots, as_of=AS_OF) == 2
