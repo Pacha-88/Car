@@ -25,14 +25,25 @@ const VARIANT_TABS: { key: Variant | "all"; label: string }[] = [
 
 const MIN_BUCKET_SIZE = 10;
 
+// One clock read for the page. Ages are bucketed by whole years here, so a
+// tab left open across midnight changes nothing - and reading the clock
+// during render is both impure and pointless at this granularity.
+const PAGE_LOADED_AT = new Date();
+
 /** "under_1yr" -> "under 1yr", "7yr_plus" -> "7yr+" - for axis space. */
 function shortLabel(label: string): string {
   return label.replace("under_1yr", "<1yr").replace("yr_plus", "yr+");
 }
 
-/** The calendar year a bucket's cars were (roughly) registered in. */
-function bucketCalendarYear(bucketIndex: number): number {
-  return new Date().getFullYear() - bucketIndex;
+/** The calendar year a bucket's cars were (roughly) registered in.
+ *
+ * The oldest bucket is a catch-all - every car at or past the last age -
+ * so naming one year for it is a claim it cannot make. On the real Model 3
+ * data that bucket holds twenty cars spanning 2019, 2018 and 2017, all
+ * presented as 2019. It gets a "<=" instead. */
+function bucketCalendarYear(label: string, bucketIndex: number): string {
+  const year = PAGE_LOADED_AT.getFullYear() - bucketIndex;
+  return label.endsWith("_plus") ? `≤${year}` : String(year);
 }
 
 export function DepreciationModule({ listings }: DepreciationModuleProps) {
@@ -40,7 +51,13 @@ export function DepreciationModule({ listings }: DepreciationModuleProps) {
   const [variantTab, setVariantTab] = useState<Variant | "all">("all");
   const [referenceKm, setReferenceKm] = useState(60_000);
 
-  const scoped = variantTab === "all" ? listings : listings.filter((l) => l.variant === variantTab);
+  // Memoized: unmemoized, this was a fresh array on every render as soon as
+  // a variant tab was selected, so the `input` memo below it never once hit
+  // its cache and the whole curve was recomputed on every hover.
+  const scoped = useMemo(
+    () => (variantTab === "all" ? listings : listings.filter((l) => l.variant === variantTab)),
+    [listings, variantTab],
+  );
   const input = useMemo(
     () =>
       scoped
@@ -56,7 +73,7 @@ export function DepreciationModule({ listings }: DepreciationModuleProps) {
   const buckets = useMemo(() => {
     if (input.length < 2) return [];
     try {
-      return computeDepreciationCurve(input, new Date(), { referenceKm, minBucketSize: MIN_BUCKET_SIZE });
+      return computeDepreciationCurve(input, PAGE_LOADED_AT, { referenceKm, minBucketSize: MIN_BUCKET_SIZE });
     } catch {
       return [];
     }
@@ -150,7 +167,7 @@ export function DepreciationModule({ listings }: DepreciationModuleProps) {
                         {shortLabel(bucket.label)}
                       </text>
                       <text textAnchor="middle" dy={26} fill="var(--text-muted)" fontSize={9.5}>
-                        {bucketCalendarYear(bucket.bucketIndex)} · n={bucket.n}
+                        {bucketCalendarYear(bucket.label, bucket.bucketIndex)} · n={bucket.n}
                       </text>
                     </g>
                   );
@@ -331,7 +348,7 @@ function BucketTooltip({
   return (
     <div className="rounded-md border border-border bg-surface-1 px-2.5 py-1.5 text-xs shadow-lg">
       <div className="font-medium text-primary">
-        {shortLabel(bucket.label)} · {bucketCalendarYear(bucket.bucketIndex)}
+        {shortLabel(bucket.label)} · {bucketCalendarYear(bucket.label, bucket.bucketIndex)}
       </div>
       <div className="tabular text-secondary">
         {money.format(bucket.medianPriceEur)} {pct !== null && `· ${pct}% of youngest`}
