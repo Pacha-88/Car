@@ -17,7 +17,7 @@ export function DealBadge({ deal, mode }: { deal: DealInfo | undefined; mode: "p
     if (deal.tier !== "great" && deal.tier !== "good") return null;
     return (
       <span
-        className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold text-white"
+        className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold text-white"
         style={{ backgroundColor: DEAL_TIER_COLOR[deal.tier] }}
         title={`${formatPctSigned(deal.pct)} vs the market for a similar car (variant, mileage and age)`}
       >

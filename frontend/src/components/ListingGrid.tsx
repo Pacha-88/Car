@@ -351,15 +351,13 @@ function ListingRow({
           )}
         </p>
       </div>
-      <span className="shrink-0">
-        <PriceSparkline listing={listing} latestScrapeDate={latestScrapeDate} />
-      </span>
-      <span className="shrink-0">
-        <PriceDropBadge listing={listing} />
-      </span>
-      <span className="shrink-0">
-        <DealBadge deal={deal} mode="pill" />
-      </span>
+      {/* Bare, no wrapper spans: each component renders nothing for most
+          cars, and an empty span is still a flex item - three of them cost
+          the row three phantom gap-3 steps of blank space before the
+          price. Their roots carry shrink-0 themselves. */}
+      <PriceSparkline listing={listing} latestScrapeDate={latestScrapeDate} />
+      <PriceDropBadge listing={listing} />
+      <DealBadge deal={deal} mode="pill" />
       {listing.isNew && (
         <span className="shrink-0 rounded-md bg-status-warning px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-black">NEW</span>
       )}
