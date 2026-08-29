@@ -34,6 +34,7 @@ Known gaps, not solved here:
 
 from __future__ import annotations
 
+import random
 import re
 import time
 from datetime import date
@@ -121,6 +122,18 @@ def last_page_number(html: str) -> int | None:
     return None if _NEXT_LINK_RE.search(html) else 1
 
 
+def _paced_delay() -> float:
+    """The page gap, jittered.
+
+    Two runs both stalled on page 13 of a 15-page walk. A request exactly
+    every 3.5 seconds is a metronome, and a rate limiter counting requests
+    per window sees the same shape every time; spreading the gap costs
+    nothing and stops the walk arriving at the limit in lockstep. Not a
+    proven cure for that stall - a mitigation, and a cheap one.
+    """
+    return random.uniform(REQUEST_DELAY_SECONDS * 0.6, REQUEST_DELAY_SECONDS * 1.6)
+
+
 class HasznaltautoSource(Source):
     name = "hasznaltauto"
 
@@ -197,7 +210,7 @@ class HasznaltautoSource(Source):
                 break  # the page said so itself; asking for page N+1 gets a 404
             page += 1
             if max_pages is None or page <= max_pages:
-                time.sleep(REQUEST_DELAY_SECONDS)
+                time.sleep(_paced_delay())
         return listings
 
     def fetch_raw_page(self, *, model: str, page: int = 1) -> str:
