@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
@@ -18,6 +18,7 @@ from car_tracker import cli
 from car_tracker.db.models import Listing, ListingSnapshot
 from car_tracker.db.session import get_engine, init_db, session_scope
 from car_tracker.sources.base import PartialResults, RawListing, Source
+from car_tracker.timeutil import utc_now
 
 
 class _FakeOkSource(Source):
@@ -486,7 +487,10 @@ def test_an_implausibly_large_retirement_is_refused_even_when_the_combo_reported
     ads on it looks exactly like a successful scrape of an empty market. No
     guard keyed on a source *reporting* trouble can catch that, so this one
     keys on the claim itself - forty cars do not sell overnight."""
-    _seed_listings(isolated_db, source="fake_ok", count=40, seen_at=datetime(2026, 1, 1))
+    # Seen yesterday: this is a scrape that broke *today*, which is what the
+    # cap is for. Listings already stale for a week are a different question,
+    # answered by STALE_AFTER_DAYS below.
+    _seed_listings(isolated_db, source="fake_ok", count=40, seen_at=utc_now() - timedelta(days=1))
 
     monkeypatch.setattr(cli, "fetch_latest_rates", lambda: (date(2026, 8, 28), {"HUF": 0.0025}))
     monkeypatch.setattr(cli, "SOURCES", {"fake_ok": _FakeOkSource})
@@ -501,7 +505,7 @@ def test_an_implausibly_large_retirement_is_refused_even_when_the_combo_reported
 def test_an_ordinary_days_worth_of_sales_still_retires(isolated_db, monkeypatch):
     """The cap must not become a way of never retiring anything: a normal
     run, where most listings are seen again and a few are not, retires."""
-    _seed_listings(isolated_db, source="fake_ok", count=40, seen_at=datetime(2026, 1, 1))
+    _seed_listings(isolated_db, source="fake_ok", count=40, seen_at=utc_now() - timedelta(days=1))
 
     class _SeesMostOfThem(_FakeOkSource):
         def fetch_listings(self, *, model, country, max_pages=None):
@@ -530,7 +534,7 @@ def test_an_ordinary_days_worth_of_sales_still_retires(isolated_db, monkeypatch)
 def test_the_cap_does_not_apply_to_a_source_with_only_a_handful_of_listings(isolated_db, monkeypatch):
     """A market with three cars in it can legitimately lose two in a day -
     percentages only mean something once there are enough listings."""
-    _seed_listings(isolated_db, source="fake_ok", count=3, seen_at=datetime(2026, 1, 1))
+    _seed_listings(isolated_db, source="fake_ok", count=3, seen_at=utc_now() - timedelta(days=1))
 
     monkeypatch.setattr(cli, "fetch_latest_rates", lambda: (date(2026, 8, 28), {"HUF": 0.0025}))
     monkeypatch.setattr(cli, "SOURCES", {"fake_ok": _FakeOkSource})
@@ -671,3 +675,56 @@ def test_storing_the_same_days_rate_twice_updates_it_rather_than_failing(isolate
 
     with session_scope(get_engine(isolated_db)) as session:
         assert cli._latest_huf_per_eur(session) == pytest.approx(1 / 0.0028, rel=1e-3)
+
+
+def test_the_cap_delays_retirement_rather_than_vetoing_it_forever(isolated_db, monkeypatch):
+    """The cap refuses the same implausible gap every day, so on its own it
+    is permanent, not a delay: a source that really did shrink - or a
+    country this project stopped scraping - would keep its dead listings on
+    the dashboard for good. Measured before this backstop existed: ten runs
+    against a market that fell from 400 cars to 20 retired nothing at all.
+
+    A week of nobody finding a listing settles it either way. Either the car
+    is gone, or the source has been broken all week and its prices are a
+    week stale - and a week-old price shown as today's is its own kind of
+    wrong."""
+    _seed_listings(isolated_db, source="fake_ok", count=40, seen_at=utc_now() - timedelta(days=cli.STALE_AFTER_DAYS + 1))
+
+    monkeypatch.setattr(cli, "fetch_latest_rates", lambda: (date(2026, 8, 28), {"HUF": 0.0025}))
+    monkeypatch.setattr(cli, "SOURCES", {"fake_ok": _FakeOkSource})  # sees 1 of the 41
+    monkeypatch.setattr(cli, "SCRAPE_TARGETS", {"fake_ok": {"models": ["model_y"], "countries": ["DE"]}})
+
+    cli.cmd_scrape_all(argparse.Namespace(max_pages=None, include_blocked=True))
+
+    assert _active_count(isolated_db, "fake_ok") == 1, "week-old listings go even when the cap says the gap is implausible"
+
+
+def test_the_backstop_does_not_fire_on_a_source_that_broke_today(isolated_db, monkeypatch, capsys):
+    """The other half: one bad day must still cost nothing. Only the part
+    that is genuinely a week stale is retired, not everything unseen."""
+    _seed_listings(isolated_db, source="fake_ok", count=30, seen_at=utc_now() - timedelta(days=1))
+    with session_scope(get_engine(isolated_db)) as session:
+        for i in range(30, 34):  # four that have been missing for over a week
+            session.add(
+                Listing(
+                    id=f"fake_ok:old-{i}",
+                    source="fake_ok",
+                    source_listing_id=f"old-{i}",
+                    model="model_y",
+                    country="DE",
+                    url=f"https://example.com/old-{i}",
+                    first_seen_at=utc_now() - timedelta(days=30),
+                    last_seen_at=utc_now() - timedelta(days=cli.STALE_AFTER_DAYS + 2),
+                    is_active=True,
+                )
+            )
+
+    monkeypatch.setattr(cli, "fetch_latest_rates", lambda: (date(2026, 8, 28), {"HUF": 0.0025}))
+    monkeypatch.setattr(cli, "SOURCES", {"fake_ok": _FakeOkSource})
+    monkeypatch.setattr(cli, "SCRAPE_TARGETS", {"fake_ok": {"models": ["model_y"], "countries": ["DE"]}})
+
+    cli.cmd_scrape_all(argparse.Namespace(max_pages=None, include_blocked=True))
+
+    # 34 seeded + 1 just seen = 35 active; only the 4 week-old ones go.
+    assert _active_count(isolated_db, "fake_ok") == 31
+    assert "refusing" in capsys.readouterr().out, "and it still says the gap looked wrong"

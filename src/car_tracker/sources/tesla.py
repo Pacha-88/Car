@@ -23,7 +23,7 @@ from urllib.parse import urlencode
 import httpx
 
 from car_tracker.normalize.currency import market_currency
-from car_tracker.sources.base import RawListing, Source
+from car_tracker.sources.base import PartialResults, RawListing, Source
 from car_tracker.sources.fetch import fetch_json
 from car_tracker.sources.http import build_client
 
@@ -68,10 +68,24 @@ class TeslaSource(Source):
 
     def fetch_listings(self, *, model: str, country: str, max_pages: int | None = None) -> list[RawListing]:
         listings: list[RawListing] = []
-        for page_num, (offset, results, total) in enumerate(self._iter_pages(model, country), start=1):
-            listings.extend(parse_item(item, model=model, country=country) for item in results)
-            if offset + PAGE_SIZE >= total or (max_pages is not None and page_num >= max_pages):
-                break
+        pages_done = 0
+        try:
+            for page_num, (offset, results, total) in enumerate(self._iter_pages(model, country), start=1):
+                listings.extend(parse_item(item, model=model, country=country) for item in results)
+                pages_done = page_num
+                if offset + PAGE_SIZE >= total or (max_pages is not None and page_num >= max_pages):
+                    break
+        except Exception as exc:
+            # A rate limit or a wall part-way through a market is the common
+            # case here (this API answered a whole burst with 429 once), and
+            # the pages already in hand are current prices. Keep them - but
+            # as PartialResults, so the caller knows the rest of the market
+            # was never looked at and doesn't read "unseen" as "sold".
+            if not listings:
+                raise
+            raise PartialResults(
+                listings, f"page {pages_done + 1} failed ({type(exc).__name__}: {exc})"
+            ) from exc
         return listings
 
     def fetch_raw_page(self, *, model: str, country: str, offset: int = 0) -> dict:

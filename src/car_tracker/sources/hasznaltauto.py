@@ -41,7 +41,7 @@ from datetime import date
 import httpx
 
 from car_tracker.normalize.currency import market_currency
-from car_tracker.sources.base import RawListing, Source
+from car_tracker.sources.base import PartialResults, RawListing, Source
 from car_tracker.sources.fetch import fetch_html
 from car_tracker.sources.http import build_client
 
@@ -87,7 +87,18 @@ class HasznaltautoSource(Source):
         listings: list[RawListing] = []
         page = 1
         while max_pages is None or page <= max_pages:
-            html = self.fetch_raw_page(model=model, page=page)
+            try:
+                html = self.fetch_raw_page(model=model, page=page)
+            except Exception as exc:
+                # Same rule as the other sources: pages already fetched are
+                # real data and must not be thrown away with the failure.
+                # It matters most here - every page goes through Cloudflare
+                # (see sources/fetch.py), so a challenge appearing at page
+                # three, after one and two were served fine, is the normal
+                # way this source fails rather than an unlucky one.
+                if not listings:
+                    raise
+                raise PartialResults(listings, f"page {page} failed ({type(exc).__name__}: {exc})") from exc
             chunks = _split_listings(html)
             if not chunks:
                 break

@@ -3,7 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from car_tracker.sources.hasznaltauto import _split_listings, parse_item
+from car_tracker.sources import hasznaltauto as hasznaltauto_module
+from car_tracker.sources.base import PartialResults
+from car_tracker.sources.hasznaltauto import HasznaltautoSource, _split_listings, parse_item
 
 FIXTURE_HTML = (Path(__file__).parent / "fixtures" / "hasznaltauto_search_sample.html").read_text(encoding="utf-8")
 
@@ -86,3 +88,41 @@ def test_normalize_seller(text, expected):
     from car_tracker.sources.hasznaltauto import _normalize_seller
 
     assert _normalize_seller(text) == expected
+
+
+# --- partial-page resilience ---------------------------------------------
+# Every page here goes through Cloudflare (see sources/fetch.py), so a
+# challenge appearing at page three after one and two were served is the
+# normal way this source fails - and it used to discard both good pages.
+
+
+class _FlakyPageSource(HasznaltautoSource):
+    def __init__(self, good_pages: int, page_html: str):
+        self._good_pages = good_pages
+        self._page_html = page_html
+        self.attempted: list[int] = []
+
+    def fetch_raw_page(self, *, model: str, page: int = 1) -> str:
+        self.attempted.append(page)
+        if page > self._good_pages:
+            raise RuntimeError("blocked at both stages")
+        return self._page_html
+
+
+def test_a_failing_page_keeps_the_cars_earlier_pages_returned(monkeypatch):
+    monkeypatch.setattr(hasznaltauto_module.time, "sleep", lambda _s: None)
+    source = _FlakyPageSource(good_pages=2, page_html=FIXTURE_HTML)
+
+    with pytest.raises(PartialResults) as caught:
+        source.fetch_listings(model="model_y", country="HU")
+
+    assert caught.value.listings, "two good pages of Hungarian cars must survive"
+    assert "page 3" in caught.value.reason
+    assert source.attempted == [1, 2, 3]
+
+
+def test_a_failure_on_the_very_first_page_still_raises(monkeypatch):
+    monkeypatch.setattr(hasznaltauto_module.time, "sleep", lambda _s: None)
+    source = _FlakyPageSource(good_pages=0, page_html=FIXTURE_HTML)
+    with pytest.raises(RuntimeError):
+        source.fetch_listings(model="model_y", country="HU")

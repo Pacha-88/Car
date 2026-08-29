@@ -10,7 +10,11 @@ representative rather than transcribed.
 
 from datetime import date
 
-from car_tracker.sources.tesla import parse_item
+import pytest
+
+from car_tracker.sources import tesla as tesla_module
+from car_tracker.sources.base import PartialResults
+from car_tracker.sources.tesla import PAGE_SIZE, TeslaSource, parse_item
 
 LONG_RANGE_ITEM = {
     "Model": "my",
@@ -134,3 +138,49 @@ def test_title_falls_back_to_the_trim_code_when_there_is_no_trim_name():
     )
     assert "LR_AWD" in listing.title_raw
     assert "2024" in listing.title_raw
+
+
+# --- partial-page resilience ---------------------------------------------
+# Every source keeps what earlier pages returned when a later one fails.
+# This one is the likeliest to need it: the inventory API answered a whole
+# burst of markets with HTTP 429 on the first live run.
+
+
+class _FlakyPageSource(TeslaSource):
+    """Serves `good_pages` pages, then refuses - like a mid-market 429."""
+
+    def __init__(self, good_pages: int, total: int = 500):
+        self._good_pages = good_pages
+        self._total = total
+        self.attempted: list[int] = []
+
+    def fetch_raw_page(self, *, model: str, country: str, offset: int = 0) -> dict:
+        page = offset // PAGE_SIZE + 1
+        self.attempted.append(page)
+        if page > self._good_pages:
+            raise RuntimeError("Client error '429 Too Many Requests'")
+        return {
+            "total_matches_found": self._total,
+            "results": [{"VIN": f"V{page}-{i}", "Price": 30000, "Year": 2022} for i in range(2)],
+        }
+
+
+def test_a_failing_page_keeps_what_earlier_pages_returned(monkeypatch):
+    monkeypatch.setattr(tesla_module.time, "sleep", lambda _s: None)
+    source = _FlakyPageSource(good_pages=3)
+
+    with pytest.raises(PartialResults) as caught:
+        source.fetch_listings(model="model_y", country="DE")
+
+    assert len(caught.value.listings) == 6, "three good pages of two cars each must survive a 429 on the fourth"
+    assert "page 4" in caught.value.reason
+    assert source.attempted == [1, 2, 3, 4]
+
+
+def test_a_failure_on_the_very_first_page_still_raises(monkeypatch):
+    """Nothing to salvage, and a silent empty list would look like a market
+    with no cars in it - which is what retirement keys off."""
+    monkeypatch.setattr(tesla_module.time, "sleep", lambda _s: None)
+    source = _FlakyPageSource(good_pages=0)
+    with pytest.raises(RuntimeError):
+        source.fetch_listings(model="model_y", country="DE")

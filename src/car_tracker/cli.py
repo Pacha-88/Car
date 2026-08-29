@@ -6,7 +6,7 @@ import argparse
 import json
 import time
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy import func, select, update
@@ -285,15 +285,28 @@ def cmd_scrape_local(args: argparse.Namespace) -> None:
 # Used cars do not all sell overnight. A run that wants to retire more than
 # half of a source's active listings is describing an event that doesn't
 # happen, so refuse it and say so loudly rather than quietly emptying the
-# dashboard. The listings stay active and simply get picked up again on the
-# next healthy run; a genuinely sold-out market just takes a few days to
-# drain instead of one.
+# dashboard. The listings stay active and get picked up again by the next
+# healthy run, which reactivates anything it sees.
 MAX_RETIREMENT_SHARE = 0.5
 
 # Below this many active listings the share is noise, not signal — a market
 # with three cars in it can legitimately lose two in a day. The cap only
 # applies once a source is big enough for percentages to mean something.
 MIN_ACTIVE_FOR_RETIREMENT_CAP = 10
+
+# ...and the cap needs a way out, or it stops being a safety net and
+# becomes a leak. Refusing on its own is permanent: the same implausible
+# gap is refused again the next day, and the next, so a source that really
+# did shrink — or that this project simply stopped scraping a country of —
+# would keep its dead listings on the dashboard forever. Measured: ten runs
+# against a market that fell from 400 cars to 20 retired nothing at all.
+#
+# A listing nobody has found for a week is not a blip either way. Either
+# the car is gone, or the source has been broken for a week and its prices
+# are a week stale — and a week-old price shown as today's is its own kind
+# of wrong. So the cap delays retirement rather than vetoing it: past this
+# many days, unseen listings go regardless of how many there are.
+STALE_AFTER_DAYS = 7
 
 
 def _retire_unseen(
@@ -344,10 +357,24 @@ def _retire_unseen(
             if not unseen:
                 continue
             if active >= MIN_ACTIVE_FOR_RETIREMENT_CAP and unseen / active > MAX_RETIREMENT_SHARE:
+                # Too many at once to believe today — but not forever (see
+                # STALE_AFTER_DAYS): whatever has been missing for a week
+                # goes anyway, so a real shrink still drains and a broken
+                # source can't hold stale prices on the dashboard for good.
+                stale_where = (*unseen_where, Listing.last_seen_at < run_started_at - timedelta(days=STALE_AFTER_DAYS))
+                stale = session.execute(select(func.count()).select_from(Listing).where(*stale_where)).scalar_one()
                 print(
                     f"kept    {source_name}: would have retired {unseen} of {active} active listings "
                     f"({unseen / active:.0%}) - refusing, that is a broken scrape, not a sold-out market"
+                    + (
+                        f" (retiring {stale} of them anyway - unseen for over {STALE_AFTER_DAYS} days)"
+                        if stale
+                        else ""
+                    )
                 )
+                if stale:
+                    session.execute(update(Listing).where(*stale_where).values(is_active=False))
+                    retired[source_name] = stale
                 continue
             session.execute(update(Listing).where(*unseen_where).values(is_active=False))
             retired[source_name] = unseen
