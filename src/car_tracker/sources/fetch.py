@@ -105,7 +105,17 @@ _CDP_ENV_VAR = "CAR_TRACKER_CHROME_CDP"
 
 
 class FetchError(RuntimeError):
-    """A page could not be retrieved by any available strategy."""
+    """A page could not be retrieved by any available strategy.
+
+    `statuses` carries the HTTP codes each stage came back with, so a caller
+    can tell one refusal from another - a 429 rate limit, a 403 bot wall and
+    a 412 "this market has no such endpoint" all arrive here as the same
+    exception type but mean very different things to the source.
+    """
+
+    def __init__(self, message: str, *, statuses: tuple[int, ...] = ()) -> None:
+        super().__init__(message)
+        self.statuses = statuses
 
 
 def looks_unusable(status_code: int, body: str) -> bool:
@@ -445,7 +455,7 @@ def _headed_instructions(url: str, status: int, body: str) -> str:
     )
 
 
-def _save_for_diagnosis(url: str, body: str) -> Path | None:
+def save_for_diagnosis(url: str, body: str, *, label: str = "blocked") -> Path | None:
     """Keep the page that defeated us.
 
     A run reported "a white error page" from Tesla, which is not enough to
@@ -455,7 +465,7 @@ def _save_for_diagnosis(url: str, body: str) -> Path | None:
     """
     host = re.sub(r"^https?://([^/]+).*$", r"\1", url)
     try:
-        path = _browser_profile_dir().parent / f"last-blocked-{host}.html"
+        path = _browser_profile_dir().parent / f"last-{label}-{host}.html"
         path.write_text(body, encoding="utf-8")
         return path
     except Exception:
@@ -466,7 +476,7 @@ def _still_blocked_advice(url: str, status: int, body: str) -> str:
     """What to actually do about it — this runs on a person's own laptop."""
     host = re.sub(r"^https?://([^/]+).*$", r"\1", url)
     lines = [f"  browser: still blocked after waiting ({describe(status, body)})", ""]
-    saved = _save_for_diagnosis(url, body)
+    saved = save_for_diagnosis(url, body)
     if saved is not None:
         lines += [f"  The page itself is saved at {saved} - worth opening if this is unfamiliar.", ""]
     if any(m in body[:4000].lower() for m in _BLOCK_MARKERS):
@@ -501,17 +511,21 @@ def fetch_html(url: str, *, accept_language: str = "en-US,en;q=0.9", timeout: fl
             raise FetchError(
                 f"{url}: HTTP {status} - the site is rate limiting this address right now. "
                 "A browser cannot help (same address) and hammering extends the limit. "
-                "Wait an hour or two, then run again."
+                "Wait an hour or two, then run again.",
+                statuses=(status,),
             )
         first_failure = describe(status, body)
+        first_status = status
     else:
         first_failure = "curl_cffi unavailable"
+        first_status = None
 
     status, body = _fetch_with_browser(url, accept_language=accept_language, timeout=timeout)
     if looks_unusable(status, body):
         raise FetchError(
             f"{url}: blocked at both stages (impersonation: {first_failure}; browser: {describe(status, body)}). "
-            "If this persists, try a visible browser: set CAR_TRACKER_HEADED=1 and run again."
+            "If this persists, try a visible browser: set CAR_TRACKER_HEADED=1 and run again.",
+            statuses=tuple(c for c in (first_status, status) if c is not None),
         )
     return body
 

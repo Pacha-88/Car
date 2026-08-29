@@ -26,7 +26,7 @@ from car_tracker.normalize.color import normalize_color
 from car_tracker.normalize.currency import market_currency
 from car_tracker.normalize.title import model_display_name
 from car_tracker.sources.base import PartialResults, RawListing, Source
-from car_tracker.sources.fetch import fetch_json
+from car_tracker.sources.fetch import FetchError, fetch_json
 from car_tracker.sources.http import build_client
 
 INVENTORY_URL = "https://www.tesla.com/inventory/api/v4/inventory-results"
@@ -125,16 +125,45 @@ class TeslaSource(Source):
         listings: list[RawListing] = []
         pages_done = 0
         photoless_sample: dict | None = None
+        unparsable: tuple[int, str] = (0, "")
         try:
             for page_num, (offset, results, total) in enumerate(self._iter_pages(model, country), start=1):
                 for item in results:
-                    raw = parse_item(item, model=model, country=country)
+                    try:
+                        raw = parse_item(item, model=model, country=country)
+                    except Exception as exc:  # noqa: BLE001 - see below
+                        # One odd car must not cost the whole market. A
+                        # single AT item whose EmissionsData was a string
+                        # took down all of tesla/model_y/AT - 0 listings
+                        # kept from a market that had answered fine.
+                        unparsable = (unparsable[0] + 1, f"{type(exc).__name__}: {exc}")
+                        continue
                     if not raw.photo_urls and photoless_sample is None:
                         photoless_sample = item
                     listings.append(raw)
                 pages_done = page_num
                 if offset + PAGE_SIZE >= total or (max_pages is not None and page_num >= max_pages):
                     break
+        except FetchError as exc:
+            # 412 at BOTH stages, on the very first page, is not a wall: HU
+            # answered that way every time, twice per run, while DE and AT
+            # answered normally from the same address in the same minute.
+            # Tesla's inventory API simply will not serve that market.
+            #
+            # Treated as an empty market rather than a failure, and
+            # deliberately not as a partial either: both of those mark the
+            # source incomplete, and a market that refuses on every single
+            # run would then block retirement for ALL of Tesla forever -
+            # so sold cars in Germany would never leave the dashboard. The
+            # protection against a real API-wide outage is the retirement
+            # share cap in cli.py, which is exactly the case it exists for.
+            if not listings and set(exc.statuses) == {412}:
+                print(
+                    f"    tesla/{model}/{country}: the inventory API refuses this market "
+                    f"(HTTP 412 at both stages) - treating it as empty, not as a block"
+                )
+                return []
+            raise
         except Exception as exc:
             # A rate limit or a wall part-way through a market is the common
             # case here (this API answered a whole burst with 429 once), and
@@ -146,6 +175,11 @@ class TeslaSource(Source):
             raise PartialResults(
                 listings, f"page {pages_done + 1} failed ({type(exc).__name__}: {exc})"
             ) from exc
+        if unparsable[0]:
+            print(
+                f"    tesla/{model}/{country}: skipped {unparsable[0]} item(s) this parser could not"
+                f" read ({unparsable[1]}) - kept the other {len(listings)}"
+            )
         self._report_photoless(listings, photoless_sample, model=model, country=country)
         return listings
 
@@ -245,12 +279,59 @@ def _compose_title(item: dict, *, model: str) -> str:
     if year:
         parts.append(str(year))
 
-    paint = item.get("PAINT") or []
-    if paint:
+    first_paint = _first_paint(item)
+    if first_paint:
         # "MIDNIGHT_SILVER" -> "Midnight Silver"
-        parts.append(str(paint[0]).replace("_", " ").title())
+        parts.append(first_paint.replace("_", " ").title())
 
     return " · ".join(parts)
+
+
+def _first_paint(item: dict) -> str | None:
+    """Tesla's PAINT is a list of codes - except when it is a bare string.
+
+    A live AT response crashed the whole market with "'str' object has no
+    attribute 'get'"; the same per-market shape drift that stock_photo
+    already guards for in the option-code field reaches these three, so
+    they guard for it the same way rather than trusting one shape.
+    """
+    paint = item.get("PAINT")
+    if isinstance(paint, str):
+        return paint or None
+    if isinstance(paint, (list, tuple)) and paint:
+        first = paint[0]
+        return str(first) if first else None
+    return None
+
+
+def _photo_urls(item: dict) -> list[str]:
+    """VehiclePhotos entries are {"imageUrl": ...} dicts - or plain URLs."""
+    photos = item.get("VehiclePhotos")
+    if not isinstance(photos, (list, tuple)):
+        return []
+    urls: list[str] = []
+    for entry in photos:
+        if isinstance(entry, dict):
+            url = entry.get("imageUrl")
+        elif isinstance(entry, str):
+            url = entry
+        else:
+            url = None
+        if url:
+            urls.append(str(url))
+    return urls
+
+
+def _power_kw(item: dict) -> int | None:
+    """EmissionsData is an object on some markets and a string on others."""
+    data = item.get("EmissionsData")
+    power = data.get("power") if isinstance(data, dict) else None
+    if power is None:
+        return None
+    try:
+        return int(float(power))
+    except (TypeError, ValueError):
+        return None
 
 
 def parse_item(item: dict, *, model: str, country: str) -> RawListing:
@@ -261,10 +342,7 @@ def parse_item(item: dict, *, model: str, country: str) -> RawListing:
     if odometer is not None and str(unit).lower().startswith("mi"):
         odometer = round(odometer * 1.60934)
 
-    paint = item.get("PAINT") or []
-    photos = [p["imageUrl"] for p in item.get("VehiclePhotos", []) if p.get("imageUrl")] or stock_photo(
-        item, model=model
-    )
+    photos = _photo_urls(item) or stock_photo(item, model=model)
 
     return RawListing(
         source="tesla",
@@ -282,8 +360,8 @@ def parse_item(item: dict, *, model: str, country: str) -> RawListing:
         photo_urls=photos,
         seller_type="tesla",
         location=item.get("City"),
-        power_kw=(item.get("EmissionsData") or {}).get("power"),
-        color=normalize_color(paint[0] if paint else None),
+        power_kw=_power_kw(item),
+        color=normalize_color(_first_paint(item)),
     )
 
 

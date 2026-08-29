@@ -42,24 +42,69 @@ import httpx
 
 from car_tracker.normalize.currency import market_currency
 from car_tracker.sources.base import PartialResults, RawListing, Source
-from car_tracker.sources.fetch import fetch_html
+from car_tracker.sources.fetch import fetch_html, save_for_diagnosis
 from car_tracker.sources.http import build_client
 
 BASE_URL = "https://www.hasznaltauto.hu/szemelyauto/tesla"
 MODEL_SLUGS = {"model_y": "model_y", "model_3": "model_3"}  # model_3 unconfirmed
 
-REQUEST_DELAY_SECONDS = 2.0  # same conservative starting point as kleinanzeigen.py
+# Raised from 2.0 after a real 28-page run from the owner's home connection
+# drew three Cloudflare challenges (model_y page 12, model_3 pages 4 and
+# 13) - and the last one could not be cleared, which cost the whole
+# model_3 combo. Every extra second here is cheaper than a manual puzzle,
+# and far cheaper than a failed combo.
+REQUEST_DELAY_SECONDS = 3.5
 
-_LISTING_START = '<div class="row talalati-sor'
+# A listing row is any <div> whose class list contains "talalati-sor" - as a
+# TOKEN, not as the contiguous string 'class="row talalati-sor'. The server
+# writes `class="row talalati-sor kiemelt"`, but a browser re-serializes the
+# attribute in classList order the moment any script touches it, so one
+# `classList.add()` anywhere on the page turns that literal into a string
+# that matches nothing. This module reads pages through a real browser (see
+# fetch.py), i.e. exactly the DOM where that can happen.
+_LISTING_START_RE = re.compile(r'<div[^>]*\sclass="(?:[^"]*\s)?talalati-sor(?:\s[^"]*)?"', re.I)
 _HIRKOD_RE = re.compile(r'data-hirkod="(\d+)"')
-_TITLE_URL_RE = re.compile(r'<h3>\s*<a[^>]*href="([^"]+)"[^>]*>([^<]+)</a>\s*</h3>')
+# The ad number is the tail of every listing URL
+# (".../tesla_model_y_rwd_..._60kwh-23417259"), which is a far better place
+# to read it from than data-hirkod: that attribute lives on the "parkolo"
+# button inside <span class="parking-button-on-mobile">, i.e. markup the
+# desktop DOM has no reason to keep. data-hirkod stays as the fallback.
+_URL_ID_RE = re.compile(r"-(\d{5,})/?$")
+# <h3> carried no attributes in the sample this was built from; requiring
+# that exact tag would drop every row the day the site adds a class to it,
+# and the anchor text is allowed to contain markup for the same reason.
+_TITLE_URL_RE = re.compile(r'<h3[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>\s*</h3>', re.S)
 _REG_DATE_RE = re.compile(r'<span class="info[^"]*">\s*(\d{4})/(\d{1,2}),\s*</span>')
 _POWER_RE = re.compile(r'<span class="info[^"]*">\s*(\d+)\s*kW,\s*</span>')
-_MILEAGE_RE = re.compile(r"<abbr[^>]*>([\d\s]+)\s*km</abbr>")
-_PRICE_RE = re.compile(r"pricefield-primary(?:-highlighted)?\">\s*([\d\s]+)\s*Ft\s*</div>")
+_MILEAGE_RE = re.compile(r"<abbr[^>]*>([\d\s\u00a0]+)\s*km</abbr>")
+# The price appears twice per row (a mobile block and a desktop one) in
+# either the plain or the -highlighted class; any attribute may follow.
+_PRICE_RE = re.compile(r'pricefield-primary(?:-highlighted)?"[^>]*>\s*([\d\s\u00a0]+)\s*Ft\s*<')
 _DESCRIPTION_RE = re.compile(r'talalati-sor__leiras"[^>]*>(.*?)</div>', re.S)
 _SELLER_RE = re.compile(r'trader-name">\s*([^<]+?)\s*</span>')
 _IMAGE_RE = re.compile(r'<img class="img-responsive" src="([^"]+)"')
+
+
+# The result pages say how many there are, in their own <head>:
+#   <link href="/szemelyauto/tesla/model_y/page15" rel="last">
+# Walking past that is how a clean 15-page scrape turned into a failure -
+# page16 answers HTTP 404 with a 144 KB body, which every block check
+# rightly reads as "refused", and the whole combo (fifteen good pages of
+# it) was thrown away over a page that was never supposed to be requested.
+_LAST_PAGE_RE = re.compile(r'<link[^>]*\brel="last"[^>]*>|<link[^>]*\brel=.last.[^>]*>', re.I)
+_PAGE_NUM_RE = re.compile(r"/page(\d+)")
+_NEXT_LINK_RE = re.compile(r'<link[^>]*\brel="next"', re.I)
+
+
+def last_page_number(html: str) -> int | None:
+    """The last page this result set has, per the page's own rel="last"."""
+    match = _LAST_PAGE_RE.search(html)
+    if match:
+        page = _PAGE_NUM_RE.search(match.group(0))
+        if page:
+            return int(page.group(1))
+    # No rel="last" but no rel="next" either: this is the only/last page.
+    return None if _NEXT_LINK_RE.search(html) else 1
 
 
 class HasznaltautoSource(Source):
@@ -86,6 +131,8 @@ class HasznaltautoSource(Source):
 
         listings: list[RawListing] = []
         page = 1
+        last_page: int | None = None
+        rows_seen = 0
         while max_pages is None or page <= max_pages:
             try:
                 html = self.fetch_raw_page(model=model, page=page)
@@ -99,10 +146,34 @@ class HasznaltautoSource(Source):
                 if not listings:
                     raise
                 raise PartialResults(listings, f"page {page} failed ({type(exc).__name__}: {exc})") from exc
+
+            if last_page is None:
+                last_page = last_page_number(html)
+
             chunks = _split_listings(html)
             if not chunks:
                 break
-            listings.extend(parsed for c in chunks if (parsed := parse_item(c, model=model)) is not None)
+            rows_seen += len(chunks)
+            parsed = [item for c in chunks if (item := parse_item(c, model=model)) is not None]
+            if not parsed:
+                # Rows on the page, none of them readable: the markup moved
+                # under the patterns above. Silence here is how this source
+                # spent a whole run walking fifteen pages and storing
+                # nothing, reported as "NO data (every attempt was
+                # refused)" - which pointed at Cloudflare when the fetch had
+                # in fact worked perfectly. Say which field gave out, and
+                # keep the page so it can be read.
+                unreadable = _unreadable_page_error(html, chunks, page=page, model=model)
+                if listings:
+                    # Earlier pages read fine; they are real cars at real
+                    # prices and go to the caller like any other partial.
+                    raise PartialResults(listings, str(unreadable)) from unreadable
+                raise unreadable
+            listings.extend(parsed)
+            print(f"    hasznaltauto/{model}: page {page} - {len(parsed)} of {len(chunks)} rows read")
+
+            if last_page is not None and page >= last_page:
+                break  # the page said so itself; asking for page N+1 gets a 404
             page += 1
             if max_pages is None or page <= max_pages:
                 time.sleep(REQUEST_DELAY_SECONDS)
@@ -122,16 +193,65 @@ class HasznaltautoSource(Source):
         return fetch_html(url, accept_language="hu-HU,hu;q=0.9,en-US;q=0.8,en;q=0.7")
 
 
+def _unreadable_page_error(html: str, chunks: list[str], *, page: int, model: str) -> Exception:
+    """Which of the three required fields stopped matching, and where to look."""
+    sample = chunks[0]
+    missing = [
+        name
+        for name, found in (
+            ("listing id (url tail or data-hirkod)", _listing_id(sample, _href_of(sample)) is not None),
+            ("title/url (<h3><a href=...>)", _TITLE_URL_RE.search(sample) is not None),
+            ("price (pricefield-primary)", _PRICE_RE.search(sample) is not None),
+        )
+        if not found
+    ]
+    saved = save_for_diagnosis("https://www.hasznaltauto.hu/", html, label=f"unreadable-{model}")
+    where = f" Saved at {saved}." if saved else ""
+    # The excerpt matters more than the file: whoever runs this reads a
+    # terminal, and pasting three lines back is a great deal easier than
+    # finding and sending a 150 KB page.
+    excerpt = re.sub(r"\s+", " ", sample[:400])
+    return RuntimeError(
+        f"page {page} has {len(chunks)} listing rows but none could be read - "
+        f"missing: {', '.join(missing) or 'nothing obvious, the row split may be wrong'}."
+        f" The site's markup has moved.{where}\n"
+        f"    first row starts: {excerpt}"
+    )
+
+
+def _href_of(chunk: str) -> str | None:
+    match = _TITLE_URL_RE.search(chunk)
+    return match.group(1) if match else None
+
+
+def _listing_id(chunk: str, href: str | None) -> str | None:
+    """Ad number from the URL tail, falling back to data-hirkod."""
+    if href:
+        from_url = _URL_ID_RE.search(href)
+        if from_url:
+            return from_url.group(1)
+    hirkod = _HIRKOD_RE.search(chunk)
+    return hirkod.group(1) if hirkod else None
+
+
 def _split_listings(html: str) -> list[str]:
-    parts = html.split(_LISTING_START)
-    return [_LISTING_START + part for part in parts[1:]]
+    """Each listing row, from its own opening <div> to the next one's.
+
+    See the module docstring: the rows have no unique closing marker, so the
+    page is cut at each row's opening tag instead.
+    """
+    starts = [m.start() for m in _LISTING_START_RE.finditer(html)]
+    if not starts:
+        return []
+    bounds = [*starts, len(html)]
+    return [html[bounds[i] : bounds[i + 1]] for i in range(len(starts))]
 
 
 def parse_item(chunk: str, *, model: str) -> RawListing | None:
-    hirkod = _HIRKOD_RE.search(chunk)
     title_url = _TITLE_URL_RE.search(chunk)
     price_match = _PRICE_RE.search(chunk)
-    if not hirkod or not title_url or not price_match:
+    listing_id = _listing_id(chunk, title_url.group(1) if title_url else None)
+    if not listing_id or not title_url or not price_match:
         return None
 
     price = _parse_number(price_match.group(1))
@@ -144,11 +264,11 @@ def parse_item(chunk: str, *, model: str) -> RawListing | None:
     mileage_match = _MILEAGE_RE.search(chunk)
     seller_match = _SELLER_RE.search(chunk)
     image_match = _IMAGE_RE.search(chunk)
-    title_text = title_url.group(2).strip()
+    title_text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", title_url.group(2))).strip()
 
     return RawListing(
         source="hasznaltauto",
-        source_listing_id=hirkod.group(1),
+        source_listing_id=listing_id,
         model=model,
         country="HU",
         url="https://www.hasznaltauto.hu" + title_url.group(1),

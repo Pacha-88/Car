@@ -264,3 +264,102 @@ def test_a_run_nameses_the_fields_of_a_photoless_car(capsys):
     out = capsys.readouterr().out
     assert "1 of 1 cars have no photos" in out
     assert "'VIN'" in out
+
+
+# --- per-market field-shape drift ----------------------------------------
+# A live AT market failed the whole combo with "'str' object has no
+# attribute 'get'": Tesla's inventory API does not answer every market with
+# the same shapes, and three fields here trusted one each. Nothing about
+# these is exotic - stock_photo already guarded its own field the same way.
+
+
+@pytest.mark.parametrize(
+    "extra, expect",
+    [
+        ({"PAINT": "MIDNIGHT_SILVER"}, {"color": "silver"}),
+        ({"PAINT": ["WHITE"]}, {"color": "white"}),
+        ({"PAINT": []}, {"color": None}),
+        ({"EmissionsData": "not an object"}, {"power_kw": None}),
+        ({"EmissionsData": {"power": 220}}, {"power_kw": 220}),
+        ({"EmissionsData": {"power": "220"}}, {"power_kw": 220}),
+        ({"EmissionsData": {"power": "n/a"}}, {"power_kw": None}),
+    ],
+)
+def test_odd_field_shapes_do_not_crash_the_market(extra, expect):
+    item = {"VIN": "X1", "Price": 40000, "Year": 2024, "TrimName": "Long Range AWD", "Odometer": 1000, **extra}
+    raw = parse_item(item, model="model_y", country="AT")
+    for field, value in expect.items():
+        assert getattr(raw, field) == value
+
+
+@pytest.mark.parametrize(
+    "photos, expected",
+    [
+        ([{"imageUrl": "https://x/1.jpg"}], ["https://x/1.jpg"]),
+        (["https://x/2.jpg", "https://x/3.jpg"], ["https://x/2.jpg", "https://x/3.jpg"]),
+        ("not a list", []),
+        ([{"noUrl": 1}], []),
+    ],
+)
+def test_vehicle_photos_shapes(photos, expected):
+    item = {"VIN": "X1", "Price": 40000, "Year": 2024, "VehiclePhotos": photos}
+    raw = parse_item(item, model="model_y", country="AT")
+    # An empty result falls through to the compositor render, which is a
+    # different thing entirely - so only assert the direct URLs.
+    if expected:
+        assert raw.photo_urls == expected
+    else:
+        assert all("static-assets.tesla.com" in u for u in raw.photo_urls)
+
+
+def test_one_unreadable_car_does_not_cost_the_whole_market(monkeypatch, capsys):
+    """A single bad item used to take every car in the market with it."""
+    monkeypatch.setattr(tesla_module.time, "sleep", lambda _s: None)
+    good = {"VIN": "A", "Price": 40000, "Year": 2024, "Odometer": 1000}
+    other = {"VIN": "B", "Price": 41000, "Year": 2024, "Odometer": 2000}
+
+    class _OneRotten(TeslaSource):
+        def __init__(self):
+            pass
+
+        def fetch_raw_page(self, *, model, country, offset=0):
+            return {"results": [good, "a bare string where a car should be", other], "total_matches_found": 3}
+
+    listings = _OneRotten().fetch_listings(model="model_y", country="AT")
+    assert [raw.source_listing_id for raw in listings] == ["A", "B"]
+    assert "skipped 1 item" in capsys.readouterr().out
+
+
+def test_a_market_tesla_does_not_serve_is_an_empty_market_not_a_failure(monkeypatch, capsys):
+    """HU answers 412 at both stages, every run, while DE and AT answer fine.
+
+    Neither a failure nor a partial: both mark the source incomplete, and a
+    market that refuses on every run would then block retirement for all of
+    Tesla forever - sold German cars would never leave the dashboard. The
+    guard against a genuine API-wide outage is the retirement share cap.
+    """
+    monkeypatch.setattr(tesla_module.time, "sleep", lambda _s: None)
+
+    class _Refused(TeslaSource):
+        def __init__(self):
+            pass
+
+        def fetch_raw_page(self, *, model, country, offset=0):
+            raise tesla_module.FetchError("blocked at both stages", statuses=(412, 412))
+
+    assert _Refused().fetch_listings(model="model_y", country="HU") == []
+    assert "refuses this market" in capsys.readouterr().out
+
+
+def test_a_real_block_is_still_a_failure(monkeypatch):
+    monkeypatch.setattr(tesla_module.time, "sleep", lambda _s: None)
+
+    class _Blocked(TeslaSource):
+        def __init__(self):
+            pass
+
+        def fetch_raw_page(self, *, model, country, offset=0):
+            raise tesla_module.FetchError("blocked at both stages", statuses=(429, 403))
+
+    with pytest.raises(tesla_module.FetchError):
+        _Blocked().fetch_listings(model="model_y", country="DE")
