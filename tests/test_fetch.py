@@ -270,25 +270,39 @@ def test_browser_is_reused_across_fetches(monkeypatch):
     """One run fetches dozens of URLs. Launching a browser per URL was slow
     and, in headed mode, opened and closed a window for every page."""
     launches = {"n": 0}
-    pages = {"n": 0}
+    navigations = {"n": 0}
 
     class _FakePage:
+        def __init__(self):
+            self.closed = False
+
         def goto(self, url, **kw):
-            pages["n"] += 1
+            navigations["n"] += 1
             return type("R", (), {"status": 200})()
 
         def content(self):
             return LISTINGS_HTML
 
+        def is_closed(self):
+            return self.closed
+
         def close(self):
-            return None
+            self.closed = True
 
     class _FakeContext:
+        """Behaves like a real persistent context: it comes up with one tab
+        already open, and new_page() adds to that list."""
+
+        def __init__(self):
+            self.pages = [_FakePage()]
+
         def add_init_script(self, _s):
             return None
 
         def new_page(self):
-            return _FakePage()
+            page = _FakePage()
+            self.pages.append(page)
+            return page
 
         def close(self):
             return None
@@ -312,4 +326,83 @@ def test_browser_is_reused_across_fetches(monkeypatch):
         assert status == 200
 
     assert launches["n"] == 1, "the browser should start once, not once per fetch"
-    assert pages["n"] == 3, "each fetch still gets its own tab"
+    assert navigations["n"] == 3, "every fetch still actually navigates"
+    context = fetch._SESSION["context"]
+    assert len(context.pages) == 1, (
+        "one tab, navigated from URL to URL. Opening a tab per fetch left the window's own "
+        "blank first tab sitting there unexplained, and closing it emptied the window."
+    )
+    assert not context.pages[0].closed, "closing our only tab is what made the window vanish mid-run"
+
+
+def _mark_cdp(context):
+    """What _connect_to_your_own_chrome does for real: record that this
+    context belongs to someone else's browser."""
+    fetch._SESSION["cdp_browser"] = type("B", (), {"close": lambda self: None})()
+    return context
+
+
+def _install_fake_playwright(monkeypatch):
+    import sys
+    import types
+
+    fake_module = types.ModuleType("playwright.sync_api")
+    fake_module.sync_playwright = lambda: type("S", (), {"start": lambda self: object(), "stop": lambda self: None})()
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", fake_module)
+    monkeypatch.setitem(sys.modules, "playwright", types.ModuleType("playwright"))
+    sys.modules["playwright"].sync_api = fake_module
+
+def test_an_attached_browser_gets_its_own_tab_and_keeps_the_persons_tabs(monkeypatch):
+    """Rung 4 drives the person's real Chrome. Their open tabs are theirs:
+    navigating one away from what they were reading, or closing it, would be
+    the tool reaching into their session rather than borrowing it."""
+    theirs = []
+
+    class _FakePage:
+        def __init__(self, mine):
+            self.mine = mine
+            self.closed = False
+            self.url = None
+
+        def goto(self, url, **kw):
+            self.url = url
+            return type("R", (), {"status": 200})()
+
+        def content(self):
+            return LISTINGS_HTML
+
+        def is_closed(self):
+            return self.closed
+
+        def close(self):
+            self.closed = True
+
+    class _FakeContext:
+        def __init__(self):
+            self.pages = theirs
+
+        def add_init_script(self, _s):
+            return None
+
+        def new_page(self):
+            page = _FakePage(mine=True)
+            self.pages.append(page)
+            return page
+
+        def close(self):
+            raise AssertionError("must never close a context we only borrowed")
+
+    their_tab = _FakePage(mine=False)
+    theirs.append(their_tab)
+
+    monkeypatch.setattr(fetch, "_connect_to_your_own_chrome", lambda _pw, _endpoint: _mark_cdp(_FakeContext()))
+    _install_fake_playwright(monkeypatch)
+    monkeypatch.setenv(fetch._CDP_ENV_VAR, "http://localhost:9222")
+
+    status, _ = fetch._fetch_with_browser("https://example.com", accept_language="en", timeout=5)
+
+    assert status == 200
+    assert their_tab.url is None, "the person's own tab must not be navigated away"
+    assert their_tab.closed is False
+    ours = [p for p in theirs if p.mine]
+    assert len(ours) == 1 and ours[0].closed, "our tab is opened for the fetch and cleaned up after"

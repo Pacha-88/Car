@@ -8,7 +8,7 @@ import {
   steepestDrop,
   type DepreciationBucket,
 } from "../lib/depreciation";
-import { formatEur, formatEurSigned } from "../lib/format";
+import { useMoney } from "../lib/moneyContext";
 import { VARIANT_LABELS, type Listing, type Variant } from "../types";
 
 interface DepreciationModuleProps {
@@ -35,6 +35,7 @@ function bucketCalendarYear(bucketIndex: number): number {
 }
 
 export function DepreciationModule({ listings }: DepreciationModuleProps) {
+  const money = useMoney();
   const [variantTab, setVariantTab] = useState<Variant | "all">("all");
   const [referenceKm, setReferenceKm] = useState(60_000);
 
@@ -143,10 +144,10 @@ export function DepreciationModule({ listings }: DepreciationModuleProps) {
                 height={44}
               />
               <YAxis
-                tickFormatter={(v: number) => `€${Math.round(v / 1000)}k`}
+                tickFormatter={money.formatTick}
                 stroke="var(--baseline)"
                 tick={{ fill: "var(--text-muted)", fontSize: 11 }}
-                width={52}
+                width={money.axisWidth}
                 domain={["auto", "auto"]}
               />
               <Tooltip content={<BucketTooltip youngestPrice={youngestPrice} />} />
@@ -204,7 +205,7 @@ export function DepreciationModule({ listings }: DepreciationModuleProps) {
                         fontWeight={600}
                         style={{ fontVariantNumeric: "tabular-nums" }}
                       >
-                        {formatEur(Math.round(bucket.medianPriceEur / 100) * 100)}
+                        {money.format(Math.round(bucket.medianPriceEur / 100) * 100)}
                       </text>
                       {pct !== null && (
                         <text
@@ -237,21 +238,21 @@ export function DepreciationModule({ listings }: DepreciationModuleProps) {
             <InsightCard
               label={`Cheapest to own · ${cheapest.horizonYears}yr`}
               headline={`buy at ${shortLabel(cheapest.buyAtLabel).replace("_", " ")}`}
-              detail={`${formatEurSigned(-Math.abs(cheapest.annualCostEur))}/yr · ${formatEur(cheapest.buyPriceEur)}`}
+              detail={`${money.formatSigned(-Math.abs(cheapest.annualCostEur))}/yr · ${money.format(cheapest.buyPriceEur)}`}
             />
           )}
           {drop && (
             <InsightCard
               label="Steepest drop"
               headline={`${shortLabel(drop.fromLabel)} → ${shortLabel(drop.toLabel)}`}
-              detail={formatEurSigned(drop.deltaEur)}
+              detail={money.formatSigned(drop.deltaEur)}
             />
           )}
           {flat && (
             <InsightCard
               label="Curve flattens"
               headline={`${shortLabel(flat.fromLabel)} → ${shortLabel(flat.toLabel)}`}
-              detail={formatEurSigned(flat.deltaEur)}
+              detail={money.formatSigned(flat.deltaEur)}
             />
           )}
           {transitions.length > 0 && (
@@ -263,7 +264,7 @@ export function DepreciationModule({ listings }: DepreciationModuleProps) {
                     <span className="w-20 shrink-0 text-secondary">
                       {shortLabel(t.fromLabel)}→{shortLabel(t.toLabel)}
                     </span>
-                    <span className="tabular text-primary">{formatEurSigned(t.deltaEur)}</span>
+                    <span className="tabular text-primary">{money.formatSigned(t.deltaEur)}</span>
                   </div>
                 ))}
               </div>
@@ -302,6 +303,7 @@ function BucketTooltip({
   payload?: { payload: DepreciationBucket }[];
   youngestPrice?: number;
 }) {
+  const money = useMoney();
   if (!active || !payload || payload.length === 0) return null;
   const bucket = payload[0].payload;
   const pct = youngestPrice ? Math.round((bucket.medianPriceEur / youngestPrice) * 100) : null;
@@ -311,10 +313,10 @@ function BucketTooltip({
         {shortLabel(bucket.label)} · {bucketCalendarYear(bucket.bucketIndex)}
       </div>
       <div className="tabular text-secondary">
-        {formatEur(bucket.medianPriceEur)} {pct !== null && `· ${pct}% of youngest`}
+        {money.format(bucket.medianPriceEur)} {pct !== null && `· ${pct}% of youngest`}
       </div>
       <div className="tabular text-[10px] text-muted">
-        middle half {formatEur(bucket.p25PriceEur)} – {formatEur(bucket.p75PriceEur)}
+        middle half {money.format(bucket.p25PriceEur)} – {money.format(bucket.p75PriceEur)}
       </div>
       <div className="text-[10px] text-muted">
         n={bucket.n}

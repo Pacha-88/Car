@@ -5,6 +5,8 @@ import { FilterBar } from "./components/FilterBar";
 import { ListingGrid } from "./components/ListingGrid";
 import { PriceScatterChart } from "./components/PriceScatterChart";
 import { StatTiles } from "./components/StatTiles";
+import { MoneyProvider } from "./hooks/useMoney";
+import { useMoney } from "./lib/moneyContext";
 import { useListings } from "./hooks/useListings";
 import { useWatchlist } from "./hooks/useWatchlist";
 import { computeDealScores } from "./lib/dealScore";
@@ -37,8 +39,37 @@ function ThemeToggle() {
   );
 }
 
+function CurrencyToggle() {
+  const { currency, setCurrency, hufPerEur } = useMoney();
+  // Without a stored rate there is nothing to switch to, and a dead
+  // button that silently does nothing is worse than no button.
+  if (hufPerEur === null) return null;
+  return (
+    <button
+      type="button"
+      onClick={() => setCurrency(currency === "HUF" ? "EUR" : "HUF")}
+      title={`1 € = ${Math.round(hufPerEur)} Ft (last scrape)`}
+      className="rounded-md border border-border px-2 py-1 text-xs text-secondary hover:text-primary"
+    >
+      {currency === "HUF" ? "Ft" : "€"}
+    </button>
+  );
+}
+
 export default function App() {
-  const { listings, latestScrapeDate, loading, error } = useListings();
+  // useListings fetches, so it is called once here and its result handed
+  // down - the provider needs the rate out of that same payload, and
+  // calling the hook twice would mean fetching the export twice.
+  const data = useListings();
+  return (
+    <MoneyProvider hufPerEur={data.hufPerEur}>
+      <Dashboard data={data} />
+    </MoneyProvider>
+  );
+}
+
+function Dashboard({ data }: { data: ReturnType<typeof useListings> }) {
+  const { listings, latestScrapeDate, loading, error } = data;
   const { watchlist, toggle: toggleWatchlist } = useWatchlist();
   const [model, setModel] = useState<Model>("model_y");
   const [filters, setFilters] = useState<FilterState | null>(null);
@@ -165,6 +196,7 @@ export default function App() {
         </div>
         <div className="flex items-center gap-3">
           <StatTiles listings={displayed} eurPer10kKm={eurPer10kKm} />
+          <CurrencyToggle />
           <ThemeToggle />
         </div>
       </header>

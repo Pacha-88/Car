@@ -632,3 +632,42 @@ def test_a_thin_rescrape_does_not_blank_out_details_already_held(isolated_db, mo
         assert listing.title_raw == "A good title"
         assert listing.photo_urls == ["https://example.com/known.jpg"]
         assert listing.location == "Berlin"
+
+
+# --- the forint rate the dashboard converts with -------------------------
+
+
+def test_the_export_carries_the_rate_the_run_actually_used(isolated_db, tmp_path, monkeypatch):
+    """Prices are stored in euros because the market spans six eurozone
+    countries; the person reading the dashboard shops in Hungary. The rate
+    travels with the export so a listing never carries a converted copy of
+    its own price that would go stale the moment the rate moved."""
+    monkeypatch.setattr(cli, "fetch_latest_rates", lambda: (date(2026, 8, 28), {"HUF": 0.0027413}))
+    monkeypatch.setattr(cli, "SOURCES", {"fake_ok": _FakeOkSource})
+    monkeypatch.setattr(cli, "SCRAPE_TARGETS", {"fake_ok": {"models": ["model_y"], "countries": ["DE"]}})
+    cli.cmd_scrape_all(argparse.Namespace(max_pages=None, include_blocked=True))
+
+    out = tmp_path / "listings.json"
+    cli.cmd_export(argparse.Namespace(out=str(out)))
+    payload = json.loads(out.read_text())
+
+    # Stored as "1 HUF = x EUR"; the dashboard wants forints per euro.
+    assert payload["hufPerEur"] == pytest.approx(1 / 0.0027413, rel=1e-3)
+
+
+def test_the_export_says_so_rather_than_guessing_when_no_rate_was_ever_stored(isolated_db, tmp_path):
+    """A fresh database has no rate. Inventing one would put wrong forint
+    figures on every card; null lets the dashboard stay in euros."""
+    out = tmp_path / "listings.json"
+    cli.cmd_export(argparse.Namespace(out=str(out)))
+    assert json.loads(out.read_text())["hufPerEur"] is None
+
+
+def test_storing_the_same_days_rate_twice_updates_it_rather_than_failing(isolated_db):
+    """Two runs on one day (the scheduled one and scrape-local) both store
+    rates, and (rate_date, currency) is the primary key."""
+    cli._store_rates(date(2026, 8, 28), {"HUF": 0.0027})
+    cli._store_rates(date(2026, 8, 28), {"HUF": 0.0028})  # must not raise
+
+    with session_scope(get_engine(isolated_db)) as session:
+        assert cli._latest_huf_per_eur(session) == pytest.approx(1 / 0.0028, rel=1e-3)

@@ -6,13 +6,13 @@ import argparse
 import json
 import time
 from collections import defaultdict
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from sqlalchemy import func, select, update
 
 from car_tracker.analysis.listing_status import days_at_current_price, is_new_since_last_scrape
-from car_tracker.db.models import Listing, ListingSnapshot
+from car_tracker.db.models import FxRate, Listing, ListingSnapshot
 from car_tracker.db.session import init_db, session_scope
 from car_tracker.fx.ecb import fetch_latest_rates
 from car_tracker.normalize.chassis import detect_chassis
@@ -126,6 +126,7 @@ def _run_scrape(targets: dict[str, dict[str, list[str]]], *, max_pages: int | No
     rate_date, ecb_rates = fetch_latest_rates()
     rates_to_eur = {EUR: 1.0, **ecb_rates}
     print(f"fx rates as of {rate_date} (HUF={rates_to_eur.get('HUF')})")
+    _store_rates(rate_date, ecb_rates)
 
     now = utc_now()
     total_stored = 0
@@ -208,6 +209,42 @@ def _run_scrape(targets: dict[str, dict[str, list[str]]], *, max_pages: int | No
         print(f"partial combos: {', '.join(partials)}")
     if failures:
         raise SystemExit(f"failed combos: {', '.join(failures)}")
+
+
+def _store_rates(rate_date: date, rates_to_eur: dict[str, float]) -> None:
+    """Keep the day's rates, so the export doesn't need the ECB itself.
+
+    The export runs right after a scrape and could refetch, but then a
+    minute of ECB downtime would cost the whole dashboard rather than one
+    number - and the rates a run *used* are the ones its prices should be
+    read back with.
+    """
+    with session_scope() as session:
+        for currency, rate in rates_to_eur.items():
+            existing = session.get(FxRate, (rate_date, currency))
+            if existing is None:
+                session.add(FxRate(rate_date=rate_date, currency=currency, rate_to_eur=rate))
+            else:
+                existing.rate_to_eur = rate
+
+
+def _latest_huf_per_eur(session) -> float | None:
+    """How many forints one euro buys, from the most recent stored rate.
+
+    Everything is stored in EUR (prices come from six countries), but the
+    person reading this dashboard is shopping in Hungary and thinks in
+    millions of forints. Returns None when no rate has ever been stored, in
+    which case the dashboard simply stays in euros rather than inventing a
+    conversion.
+    """
+    row = session.execute(
+        select(FxRate.rate_to_eur)
+        .where(FxRate.currency == "HUF")
+        .order_by(FxRate.rate_date.desc())
+        .limit(1)
+    ).scalar()
+    # Stored as "1 HUF = x EUR"; the dashboard wants the other direction.
+    return round(1 / row, 4) if row else None
 
 
 def cmd_scrape_all(args: argparse.Namespace) -> None:
@@ -343,6 +380,7 @@ def cmd_export(args: argparse.Namespace) -> None:
     with session_scope() as session:
         latest_observed_at = session.execute(select(func.max(ListingSnapshot.observed_at))).scalar()
         latest_scrape_date = latest_observed_at.date() if latest_observed_at else None
+        huf_per_eur = _latest_huf_per_eur(session)
 
         snapshots_by_listing: dict[str, list[ListingSnapshot]] = defaultdict(list)
         for snapshot in session.execute(select(ListingSnapshot)).scalars():
@@ -386,6 +424,10 @@ def cmd_export(args: argparse.Namespace) -> None:
     payload = {
         "generatedAt": now.isoformat(),
         "latestScrapeDate": latest_scrape_date.isoformat() if latest_scrape_date else None,
+        # Prices are stored in EUR; this lets the dashboard show them in
+        # forints without every listing carrying a converted copy that
+        # would go stale the moment the rate moved.
+        "hufPerEur": huf_per_eur,
         "listings": listings_out,
     }
     # The default target (frontend/public/data/) doesn't exist in a fresh

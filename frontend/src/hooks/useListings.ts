@@ -5,6 +5,7 @@ interface ListingsState {
   listings: Listing[];
   generatedAt: string | null;
   latestScrapeDate: string | null;
+  hufPerEur: number | null;
   loading: boolean;
   error: string | null;
 }
@@ -13,6 +14,7 @@ const INITIAL_STATE: ListingsState = {
   listings: [],
   generatedAt: null,
   latestScrapeDate: null,
+  hufPerEur: null,
   loading: true,
   error: null,
 };
@@ -37,6 +39,8 @@ export function useListings(): ListingsState {
           listings: payload.listings,
           generatedAt: payload.generatedAt,
           latestScrapeDate: payload.latestScrapeDate,
+          // An export written before this field existed simply has no rate.
+          hufPerEur: payload.hufPerEur ?? null,
           loading: false,
           error: null,
         });

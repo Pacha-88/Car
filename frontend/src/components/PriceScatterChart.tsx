@@ -11,7 +11,8 @@ import {
 import { binnedMedianTrend } from "../lib/trend";
 import { yearColor, yearLegendEntries } from "../lib/colors";
 import type { DealInfo } from "../lib/dealScore";
-import { formatEur, formatKm, formatYearMonth } from "../lib/format";
+import { formatKm, formatYearMonth } from "../lib/format";
+import { useMoney } from "../lib/moneyContext";
 import { CHASSIS_LABELS, SOURCE_LABELS, VARIANT_LABELS, type Listing } from "../types";
 import { DealBadge } from "./DealBadge";
 import { ListingPhoto } from "./ListingPhoto";
@@ -42,6 +43,7 @@ export function PriceScatterChart({
   onToggleWatchlist,
   dealScores,
 }: PriceScatterChartProps) {
+  const money = useMoney();
   const points = useMemo<ScatterPoint[]>(() => {
     const withYear = listings
       .filter((l) => l.mileageKm !== null)
@@ -108,10 +110,10 @@ export function PriceScatterChart({
             dataKey="priceEur"
             type="number"
             name="Price"
-            tickFormatter={(v: number) => `€${Math.round(v / 1000)}k`}
+            tickFormatter={money.formatTick}
             stroke="var(--baseline)"
             tick={{ fill: "var(--text-muted)", fontSize: 11 }}
-            width={56}
+            width={money.axisWidth}
           />
           {showTrendLine && (
             <Line
@@ -233,6 +235,7 @@ interface HoverCardProps {
 }
 
 function HoverCard({ point, watchlist, onToggleWatchlist, dealScores }: HoverCardProps) {
+  const money = useMoney();
   const { listing } = point;
   const isWatchlisted = watchlist.has(listing.id);
   const deal = dealScores.get(listing.id);
@@ -274,7 +277,7 @@ function HoverCard({ point, watchlist, onToggleWatchlist, dealScores }: HoverCar
         <div className="mb-2 grid grid-cols-2 gap-2 tabular">
           <div>
             <div className="text-[10px] uppercase text-muted">Price</div>
-            <div className="text-sm font-semibold text-primary">{formatEur(listing.priceEur)}</div>
+            <div className="text-sm font-semibold text-primary">{money.format(listing.priceEur)}</div>
           </div>
           <div>
             <div className="text-[10px] uppercase text-muted">Mileage</div>
@@ -299,7 +302,7 @@ function HoverCard({ point, watchlist, onToggleWatchlist, dealScores }: HoverCar
         <div className="mb-2 text-[11px] text-secondary">
           {listing.daysAtCurrentPrice === 0
             ? "held at this price since today"
-            : `held ${formatEur(listing.priceEur)} for ${listing.daysAtCurrentPrice} day${listing.daysAtCurrentPrice === 1 ? "" : "s"}`}
+            : `held ${money.format(listing.priceEur)} for ${listing.daysAtCurrentPrice} day${listing.daysAtCurrentPrice === 1 ? "" : "s"}`}
         </div>
 
         <div className="flex flex-wrap gap-1">

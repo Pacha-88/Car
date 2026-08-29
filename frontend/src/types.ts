@@ -29,6 +29,9 @@ export interface Listing {
 export interface ExportPayload {
   generatedAt: string;
   latestScrapeDate: string | null;
+  /** Forints per euro at the last scrape. null until a run has stored a
+   * rate, in which case the dashboard stays in euros rather than guessing. */
+  hufPerEur: number | null;
   listings: Listing[];
 }
 

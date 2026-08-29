@@ -89,6 +89,37 @@ if grep -q "playwright install" "$LOG" 2>/dev/null; then
   RESULT=${PIPESTATUS[0]}
 fi
 
+# --- kemeny blokk eseten: probaljuk a SAJAT Chrome-mal ---
+# A 2-3. lepcso egy automata bongeszo, ami igyekszik hetkoznapinak latszani.
+# Ez itt egy hetkoznapi bongeszo: te inditod, te bongeszel benne, es amit
+# egyszer megoldasz (human-check), az a profilban marad a kovetkezo futasra.
+# Sajat user-data-dir kell hozza: a Chrome 136 ota nem enged tavoli
+# debuggolast az alapertelmezett profilon.
+CHROME_APP="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+CHROME_PROFILE="$HOME/.cache/car-tracker/chrome-cdp-profile"
+if [ "$RESULT" -ne 0 ] && grep -q "hard block page" "$LOG" 2>/dev/null && [ -x "$CHROME_APP" ]; then
+  echo
+  echo "Egy oldal az automata böngészőt is elutasította (kemény blokk)."
+  echo "Megpróbálhatjuk a saját Chrome-oddal: megnyílik egy külön Chrome-ablak,"
+  echo "abban kézzel betöltöd az oldalt (és megoldod a human-checket, ha kér),"
+  echo "utána a scrape ugyanazt az ablakot használja."
+  read -r -p "Kipróbáljuk? (i/n): " TRY_CDP
+  if [ "$TRY_CDP" = "i" ] || [ "$TRY_CDP" = "I" ]; then
+    mkdir -p "$CHROME_PROFILE"
+    CDP_URL="https://www.hasznaltauto.hu/szemelyauto/tesla/model_y"
+    "$CHROME_APP" --remote-debugging-port=9222 --user-data-dir="$CHROME_PROFILE" "$CDP_URL" >/dev/null 2>&1 &
+    echo
+    echo "Megnyílt egy Chrome-ablak. Nézd meg benne az oldalt:"
+    echo "  - ha human-checket kér, oldd meg;"
+    echo "  - ha ott is 'Sorry, you have been blocked' jön, akkor a hálózatodat"
+    echo "    tiltja a site, ezen a scraper nem tud segíteni (pár nap múlva feloldódik)."
+    read -r -p "Ha kész az oldal, nyomj Entert (a Chrome-ablakot hagyd nyitva)..." _
+    export CAR_TRACKER_CHROME_CDP=http://localhost:9222
+    uv tool run --from "$FROM_SPEC" car-tracker scrape-local 2>&1 | tee "$LOG"
+    RESULT=${PIPESTATUS[0]}
+  fi
+fi
+
 echo
 if [ "$RESULT" -eq 0 ]; then
   echo "KÉSZ — minden forrás lefutott. A dashboard a következő napi"

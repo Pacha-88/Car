@@ -2,6 +2,7 @@ import { CHASSIS_LABELS, SOURCE_COLOR_VAR, SOURCE_LABELS, VARIANT_LABELS, type L
 import { Chip } from "./Chip";
 import { RangeSlider } from "./RangeSlider";
 import { NAMED_COUNTRIES, REST_OF_EU, type FilterState, dataBounds } from "../lib/filters";
+import { useMoney } from "../lib/moneyContext";
 
 const COUNTRY_FLAGS: Record<string, string> = { DE: "🇩🇪", AT: "🇦🇹", HU: "🇭🇺", [REST_OF_EU]: "🇪🇺" };
 const COUNTRY_LABELS: Record<string, string> = { DE: "Germany", AT: "Austria", HU: "Hungary", [REST_OF_EU]: "Rest of EU" };
@@ -39,6 +40,7 @@ interface FilterBarProps {
 }
 
 export function FilterBar({ filters, onChange, modelListings, newCount, watchlistCount, dealCount, onReset }: FilterBarProps) {
+  const money = useMoney();
   const bounds = dataBounds(modelListings);
   const sourcesPresent = [...new Set(modelListings.map((l) => l.source))];
   const colorsPresent = [...new Set(modelListings.map((l) => l.color ?? "unknown"))];
@@ -141,7 +143,7 @@ export function FilterBar({ filters, onChange, modelListings, newCount, watchlis
           step={500}
           value={filters.priceRange}
           onChange={(v) => set("priceRange", v)}
-          formatValue={(v) => `€${Math.round(v / 1000)}k`}
+          formatValue={money.formatTick}
         />
         <RangeSlider
           label="Mileage"

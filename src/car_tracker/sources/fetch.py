@@ -33,8 +33,14 @@ walled:
      persistent profile so a solved Cloudflare challenge's clearance cookie
      survives to the next page and the next day.
   3. The same browser but *visible* (`CAR_TRACKER_HEADED=1`) — a real
-     window a person could watch solve the challenge, the last thing left
-     to try when even new-headless is flagged.
+     window a person can watch, and solve a challenge in.
+  4. Opt-in, and the end of the line: attach over CDP to the Chrome the
+     person already runs (`CAR_TRACKER_CHROME_CDP=http://localhost:9222`).
+     Rungs 2 and 3 are an automated browser imitating an ordinary one;
+     this one *is* an ordinary one, with its own profile and whatever
+     clearance normal browsing has already earned. Reach for it when a
+     site hard-blocks the automated browser but serves the same machine's
+     everyday Chrome perfectly well.
 
 Everything here is ordinary requests at ordinary volume; the escalation is
 about being *recognised* as the normal browser this project is, not about
@@ -72,12 +78,30 @@ _MAX_RETRY_AFTER_SECONDS = 60  # honour the server's own number, but stay bounde
 # How long to keep re-reading a challenge page before giving up. Headless
 # has only the automatic clear to wait for; headed has a person who can
 # click a checkbox, which is worth waiting properly for.
+#
+# The headed number is generous because a live run showed why: Cloudflare
+# served the hard block first and only produced the "verify you are human"
+# widget minutes later. The person solved it - and by then the run had
+# given up, so the clearance it earned was never used. Waiting costs
+# nothing when nobody is there (the window closing ends the wait early),
+# and waiting too little costs the whole run.
 _AUTO_SOLVE_SECONDS = 12
-_HEADED_SOLVE_SECONDS = 120
+_HEADED_SOLVE_SECONDS = 300
 
 # Removes the `navigator.webdriver === true` tell. Belt-and-suspenders with
 # the --disable-blink-features launch flag, which unsets it at the source.
 _STEALTH_INIT = "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+
+# Rung 4, opt-in: attach to a Chrome the person started themselves, with
+# their own profile, extensions, history and - crucially - whatever
+# Cloudflare clearance that browser has already earned. Nothing this module
+# launches can look as ordinary as a browser that genuinely is ordinary.
+#
+#   Quit Chrome, then:
+#     macOS  open -na "Google Chrome" --args --remote-debugging-port=9222
+#     Linux  google-chrome --remote-debugging-port=9222
+#   then run with CAR_TRACKER_CHROME_CDP=http://localhost:9222
+_CDP_ENV_VAR = "CAR_TRACKER_CHROME_CDP"
 
 
 class FetchError(RuntimeError):
@@ -133,8 +157,13 @@ def _shared_context(headed: bool):
     from playwright.sync_api import sync_playwright
 
     playwright = sync_playwright().start()
+    endpoint = os.environ.get(_CDP_ENV_VAR, "").strip()
     try:
-        context = _launch_browser(playwright, headed=headed)
+        if endpoint:
+            print(f"  browser: attaching to your own Chrome at {endpoint}", flush=True)
+            context = _connect_to_your_own_chrome(playwright, endpoint)
+        else:
+            context = _launch_browser(playwright, headed=headed)
     except Exception:
         playwright.stop()
         raise
@@ -149,7 +178,18 @@ def close_browser() -> None:
     """Shut the shared browser down. Safe to call when none is running."""
     context = _SESSION.pop("context", None)
     playwright = _SESSION.pop("playwright", None)
+    cdp_browser = _SESSION.pop("cdp_browser", None)
     _SESSION.pop("headed", None)
+    if cdp_browser is not None:
+        # Someone else's browser. `close()` on a connected-to browser
+        # disconnects rather than quitting it, which is what we want - the
+        # window the person is working in must survive the run. Their
+        # context is theirs too, so drop it without closing.
+        context = None
+        try:
+            cdp_browser.close()
+        except Exception:
+            pass
     for closer in (getattr(context, "close", None), getattr(playwright, "stop", None)):
         if closer is None:
             continue
@@ -212,18 +252,56 @@ def _launch_browser(playwright, *, headed: bool):
     """
     args = ["--disable-blink-features=AutomationControlled"]
     last_exc: Exception | None = None
-    for channel in ("chrome", None):
-        try:
-            return playwright.chromium.launch_persistent_context(
-                user_data_dir=str(_browser_profile_dir()),
-                channel=channel,
-                headless=not headed,
-                args=args,
-            )
-        except Exception as exc:  # noqa: PERF203 - two tries, clarity over speed
-            last_exc = exc
+    # chromium_sandbox defaults to False in Playwright, which makes Chrome
+    # open with a yellow "You are using an unsupported command-line flag:
+    # --no-sandbox. Stability and security will suffer" bar across the top.
+    # On a person's own laptop that is alarming, and it is also one more way
+    # this browser does not look like the ordinary one it is trying to be.
+    # Keep the sandbox; fall back only where the OS genuinely cannot run it
+    # (an unprivileged container), where the alternative is not launching.
+    for sandbox in (True, False):
+        for channel in ("chrome", None):
+            try:
+                return playwright.chromium.launch_persistent_context(
+                    user_data_dir=str(_browser_profile_dir()),
+                    channel=channel,
+                    headless=not headed,
+                    chromium_sandbox=sandbox,
+                    args=args,
+                )
+            except Exception as exc:  # noqa: PERF203 - four tries, clarity over speed
+                last_exc = exc
     assert last_exc is not None
     raise last_exc
+
+
+def _connect_to_your_own_chrome(playwright, endpoint: str):
+    """Rung 4: drive the Chrome the person is already running.
+
+    Every rung below this one is an automated browser doing its best
+    impression of an ordinary one. This is an ordinary one. It carries the
+    person's real profile and cookies, so a Cloudflare clearance they have
+    already earned by browsing the site normally simply applies.
+    """
+    browser = playwright.chromium.connect_over_cdp(endpoint)
+    contexts = browser.contexts
+    context = contexts[0] if contexts else browser.new_context()
+    _SESSION["cdp_browser"] = browser
+    return context
+
+
+def _first_page(context):
+    """The context's existing tab, or a new one.
+
+    `launch_persistent_context` already opens a window on about:blank, so
+    calling new_page() left a permanently blank first tab sitting next to
+    the real one - which is exactly what a person watching a headed run
+    sees and has no way to interpret.
+    """
+    for page in context.pages:
+        if not page.is_closed():
+            return page
+    return context.new_page()
 
 
 def _fetch_with_browser(url: str, *, accept_language: str, timeout: float) -> tuple[int, str]:
@@ -252,7 +330,12 @@ def _fetch_with_browser(url: str, *, accept_language: str, timeout: float) -> tu
             f"(original error: {str(exc).splitlines()[0]})"
         ) from exc
 
-    page = context.new_page()
+    # When the browser is ours we navigate its one tab from URL to URL, the
+    # way a person browsing would. When it is the person's own Chrome
+    # (rung 4), their tabs are theirs: open a new one and close it after,
+    # rather than navigating whatever they were reading out from under them.
+    borrowed = _SESSION.get("cdp_browser") is not None
+    page = context.new_page() if borrowed else _first_page(context)
     try:
         response = page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
         status = response.status if response else 0
@@ -263,35 +346,82 @@ def _fetch_with_browser(url: str, *, accept_language: str, timeout: float) -> tu
             return status, body
 
         # A challenge clears itself after a few seconds of JS. In headed
-        # mode there's a person at the keyboard, so wait long enough for
-        # them to click a checkbox too - and say so, since an unexplained
-        # browser window is just confusing. Either way the cleared cookie
-        # lands in the persistent profile and serves later runs.
+        # mode there's a person at the keyboard, so wait for them properly -
+        # and say what is going on, since an unexplained browser window is
+        # just confusing. Either way the cleared cookie lands in the
+        # persistent profile and serves later runs.
         if headed:
-            print(
-                f"\n  A browser window is open on {url}\n"
-                f"  It shows: {describe(status, body)}\n"
-                "  If it asks you to verify you're human, solve it in that window - this waits up to"
-                f" {_HEADED_SOLVE_SECONDS}s, and the result is remembered for future runs.\n",
-                flush=True,
-            )
+            print(_headed_instructions(url, status, body), flush=True)
         deadline = time.monotonic() + (_HEADED_SOLVE_SECONDS if headed else _AUTO_SOLVE_SECONDS)
         while time.monotonic() < deadline:
-            page.wait_for_timeout(1500)
-            body = page.content()
-            if not looks_unusable(200, body):
-                if headed:
-                    print("  browser: challenge cleared, continuing\n", flush=True)
+            if headed and page.is_closed():
+                # Closing the window is how a person says "skip this one".
+                # Without this the run would sit here for the full wait
+                # with nothing left to watch it.
+                print("  browser: window closed, moving on\n", flush=True)
+                break
+            try:
+                page.wait_for_timeout(1500)
+                body = page.content()
+            except Exception:
+                break  # the window went away mid-read
+            if looks_unusable(200, body):
+                continue
+
+            # Cleared. Re-request the URL rather than trusting whatever the
+            # challenge page redirected to: Cloudflare often lands on the
+            # site's home page, and the clearance cookie is what we were
+            # actually here to earn. This is the step that was missing when
+            # a live run had its challenge solved a moment too late and
+            # threw the result away.
+            if headed:
+                print("  browser: cleared - re-requesting the page\n", flush=True)
+            try:
+                response = page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
+                return (response.status if response else 200), page.content()
+            except Exception:
                 return 200, body
         if headed:
-            print("  browser: still blocked after waiting\n", flush=True)
+            print(_still_blocked_advice(url, status, body), flush=True)
         return status, body
     finally:
-        # Close the tab, keep the browser (and its cookies) for the next URL.
-        try:
-            page.close()
-        except Exception:
-            pass
+        # Keep the browser (and its cookies) for the next URL either way -
+        # closing the window's only tab in headed mode made the whole thing
+        # vanish between combos, which is what a person watching saw as
+        # "it opened and then closed itself".
+        if borrowed:
+            try:
+                page.close()
+            except Exception:
+                pass
+
+
+def _headed_instructions(url: str, status: int, body: str) -> str:
+    minutes = _HEADED_SOLVE_SECONDS // 60
+    return (
+        f"\n  A browser window is open on {url}\n"
+        f"  It shows: {describe(status, body)}\n"
+        f"  If it asks you to verify you're human, solve it there - this waits up to {minutes} minutes,\n"
+        "  and what you solve is remembered for future runs. Nothing to solve? Close the window to skip.\n"
+    )
+
+
+def _still_blocked_advice(url: str, status: int, body: str) -> str:
+    """What to actually do about it — this runs on a person's own laptop."""
+    host = re.sub(r"^https?://([^/]+).*$", r"\1", url)
+    lines = [f"  browser: still blocked after waiting ({describe(status, body)})", ""]
+    if any(m in body[:4000].lower() for m in _BLOCK_MARKERS):
+        lines += [
+            "  That is a hard block, not a puzzle - there was nothing on the page to solve.",
+            f"  Worth checking which kind: open https://{host} in your normal, everyday browser.",
+            "    - Same block there  -> the site is refusing your connection itself, and no",
+            "      scraper setting can talk it round. It usually lifts on its own in a day or two.",
+            "    - Loads fine there  -> it is this automated browser being singled out. Point the",
+            "      run at your own Chrome instead, which is indistinguishable because it is real:",
+            "        quit Chrome, then  open -na \"Google Chrome\" --args --remote-debugging-port=9222",
+            f"        and run with       {_CDP_ENV_VAR}=http://localhost:9222",
+        ]
+    return "\n".join(lines) + "\n"
 
 
 def fetch_html(url: str, *, accept_language: str = "en-US,en;q=0.9", timeout: float = 30.0) -> str:

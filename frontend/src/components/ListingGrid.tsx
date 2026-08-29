@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { DealInfo } from "../lib/dealScore";
-import { formatEur, formatKm, formatYearMonth } from "../lib/format";
+import { formatKm, formatYearMonth } from "../lib/format";
+import { useMoney } from "../lib/moneyContext";
 import { SOURCE_COLOR_VAR, SOURCE_LABELS, VARIANT_LABELS, type Listing } from "../types";
 import { DealBadge } from "./DealBadge";
 import { ListingPhoto } from "./ListingPhoto";
@@ -177,6 +178,7 @@ function ListingCard({
   onToggleWatchlist: (id: string) => void;
   deal: DealInfo | undefined;
 }) {
+  const money = useMoney();
   return (
     <a
       href={listing.url}
@@ -213,7 +215,7 @@ function ListingCard({
         <p className="line-clamp-2 text-[11px] font-medium leading-snug text-primary">{listing.titleRaw ?? "Untitled"}</p>
         <p className="text-[10px] text-muted">{subtitle(listing)}</p>
         <div className="mt-auto flex items-baseline justify-between pt-1 tabular">
-          <span className="text-sm font-semibold text-primary">{formatEur(listing.priceEur)}</span>
+          <span className="text-sm font-semibold text-primary">{money.format(listing.priceEur)}</span>
           <span className="text-[10px] text-muted">{listing.mileageKm !== null ? formatKm(listing.mileageKm) : "—"}</span>
         </div>
         <div className="flex justify-end">
@@ -235,6 +237,7 @@ function ListingRow({
   onToggleWatchlist: (id: string) => void;
   deal: DealInfo | undefined;
 }) {
+  const money = useMoney();
   return (
     <a
       href={listing.url}
@@ -259,7 +262,7 @@ function ListingRow({
         <span className="shrink-0 rounded bg-status-warning px-1.5 py-0.5 text-[10px] font-semibold text-black">NEW</span>
       )}
       <div className="shrink-0 text-right tabular">
-        <div className="text-sm font-semibold text-primary">{formatEur(listing.priceEur)}</div>
+        <div className="text-sm font-semibold text-primary">{money.format(listing.priceEur)}</div>
         <div className="text-[10px] text-muted">{listing.mileageKm !== null ? formatKm(listing.mileageKm) : "—"}</div>
         <DealBadge deal={deal} mode="inline" />
       </div>
