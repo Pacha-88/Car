@@ -26,10 +26,16 @@ function sortListings(listings: Listing[], key: SortKey, dealScores: Map<string,
     case "best_deal":
       // Most below market first; unscored cars sort last, keeping newest order.
       return copy.sort((a, b) => (dealScores.get(a.id)?.pct ?? Infinity) - (dealScores.get(b.id)?.pct ?? Infinity));
-    case "biggest_drop":
-      // Deepest cut first; a car whose seller never moved sorts last rather
-      // than mixing in among the ones who did.
-      return copy.sort((a, b) => (priceChange(a)?.pct ?? 0) - (priceChange(b)?.pct ?? 0));
+    case "biggest_drop": {
+      // Deepest cut first, then the cars nobody repriced, then the few that
+      // went UP - a rise is the least interesting thing this sort can show.
+      //
+      // Computed once per listing rather than inside the comparator, which
+      // would re-derive every car's history the O(n log n) times it is
+      // compared instead of the n times it needs to be.
+      const pct = new Map(copy.map((l) => [l.id, priceChange(l)?.pct ?? 0]));
+      return copy.sort((a, b) => (pct.get(a.id) ?? 0) - (pct.get(b.id) ?? 0));
+    }
     case "price_asc":
       return copy.sort((a, b) => a.priceEur - b.priceEur);
     case "price_desc":

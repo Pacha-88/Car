@@ -162,3 +162,30 @@ def test_an_impossible_overnight_move_is_dropped_not_averaged_in():
     days = market_history(day_one + day_two, model_of=_model_of(ids))
 
     assert days[1].index == pytest.approx(100.0)
+
+
+# --- a price that is not a price -------------------------------------------
+
+
+def test_a_snapshot_with_no_price_is_not_a_price_cut():
+    """A source that cannot read the number off a card falls back to zero
+    (AutoScout24's parser reads `priceRaw or 0`). Left in, that snapshot is
+    a seller who dropped to nothing: a 100%-off badge at the top of the
+    biggest-drop sort."""
+    snaps = [_snap("a", 1, 40000.0), _snap("a", 2, 0.0), _snap("a", 3, 39000.0)]
+    points = price_points(snaps)
+    assert [(p.on, p.price_eur) for p in points] == [(date(2026, 8, 1), 40000.0), (date(2026, 8, 3), 39000.0)]
+
+
+def test_a_car_priced_at_zero_is_left_out_of_the_market_median():
+    """One unreadable card must not drag a whole day of the index down."""
+    model_of = {f"c{i}": "model_y" for i in range(10)}
+    snaps = [_snap(f"c{i}", 1, 40000.0) for i in range(9)] + [_snap("c9", 1, 0.0)]
+    days = market_history(snaps, model_of=model_of)
+    assert [(d.n, d.median_eur) for d in days] == [(9, 40000.0)]
+
+
+def test_a_price_only_missing_in_the_original_currency_is_still_dropped():
+    """price_eur is derived, so a zero original with a non-zero euro figure
+    means the conversion invented a number the ad never carried."""
+    assert price_points([_snap("a", 1, 40000.0, original=0.0, currency="HUF")]) == []

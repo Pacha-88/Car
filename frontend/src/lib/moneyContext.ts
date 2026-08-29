@@ -23,7 +23,14 @@ export interface Money {
   /** How much a price MOVED on one car, in the same currency the price
    * itself is shown in, so "12,4 millió Ft" and "450.000 Ft" are the same
    * kind of number. Unsigned - the caller says which way it went, and a
-   * "▼" beside a "−" says it twice. */
+   * "▼" beside a "−" says it twice.
+   *
+   * `original` is the move the seller actually made, in the ad's own
+   * currency, and is what gets converted when the screen is in the other
+   * one. `eur` is only the fallback for a row stored before originals were
+   * kept: the difference between a forint ad's two euro figures carries
+   * the exchange rate as well as the seller's decision, so a badge built
+   * on it would print a percentage and an amount that disagree. */
   formatListingAmount: (
     listing: { currencyOriginal?: string | null },
     amount: { eur: number; original: number },

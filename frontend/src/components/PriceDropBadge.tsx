@@ -17,9 +17,14 @@ export function PriceDropBadge({ listing, compact = false }: { listing: Listing;
 
   const pct = Math.round(Math.abs(change.pct) * 100);
   const amount = money.formatListingAmount(listing, { eur: change.deltaEur, original: change.deltaOriginal });
+  // Converted the same way the amount above it is, so the tooltip and the
+  // badge are in one unit. `change.firstEur` is the euro figure at the rate
+  // of the day the ad went up, which for a forint ad is a different euro
+  // from the one the card is priced in today - quoting it here would put
+  // two exchange rates on one card and stop the arithmetic closing.
+  const asked = money.formatListingAmount(listing, { eur: change.firstEur, original: change.firstOriginal });
   const title =
-    `Asked ${money.formatListing({ ...listing, priceEur: change.firstEur, priceOriginal: change.firstOriginal })}` +
-    ` when it was listed · ${change.changes} price change${change.changes === 1 ? "" : "s"}` +
+    `Asked ${asked} when it was listed · ${change.changes} price change${change.changes === 1 ? "" : "s"}` +
     ` · at this price since ${change.since}`;
 
   return (

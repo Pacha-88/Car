@@ -36,10 +36,14 @@ export function MoneyProvider({ hufPerEur, children }: { hufPerEur: number | nul
       setCurrency: choose,
       hufPerEur,
       format: (v) => formatMoney(v, currency, hufPerEur),
-      formatListingAmount: (listing, amount) =>
-        listing.currencyOriginal === currency
-          ? formatAmount(Math.abs(amount.original), currency)
-          : formatMoney(Math.abs(amount.eur), currency, hufPerEur),
+      formatListingAmount: (listing, amount) => {
+        const moved = Math.abs(amount.original) || Math.abs(amount.eur);
+        if (listing.currencyOriginal === currency) return formatAmount(moved, currency);
+        // Into euros first, so formatMoney's own conversion lands back in
+        // the ad's currency when that is the one being displayed.
+        const inEur = listing.currencyOriginal === "HUF" && hufPerEur ? moved / hufPerEur : moved;
+        return formatMoney(inEur, currency, hufPerEur);
+      },
       formatListing: (listing) =>
         listing.currencyOriginal === currency && typeof listing.priceOriginal === "number"
           ? formatAmount(listing.priceOriginal, currency)

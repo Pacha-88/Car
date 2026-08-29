@@ -31,12 +31,13 @@ export function MarketTrendChart({ history, model }: MarketTrendChartProps) {
   const money = useMoney();
   const [windowDays, setWindowDays] = useState(30);
 
+  const forModel = useMemo(() => history.filter((d) => d.model === model), [history, model]);
+
   const days = useMemo(() => {
-    const forModel = history.filter((d) => d.model === model);
     if (windowDays === 0) return forModel;
     const cutoff = LOADED_AT - windowDays * 86_400_000;
     return forModel.filter((d) => new Date(`${d.date}T12:00:00`).getTime() >= cutoff);
-  }, [history, model, windowDays]);
+  }, [forModel, windowDays]);
 
   // Both numbers are rebased to the start of the window being looked at, so
   // a percentage always means "since the left edge of this chart" rather
@@ -71,15 +72,55 @@ export function MarketTrendChart({ history, model }: MarketTrendChartProps) {
 
   const windowText = windowDays === 0 ? "the whole record" : `the last ${windowDays} days`;
 
+  const header = (
+    <header className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-border px-4 py-2.5">
+      <div className="min-w-0">
+        <h2 className="text-sm font-semibold leading-tight text-primary">Market movement</h2>
+        <p className="mt-0.5 text-xs text-muted">
+          Every {model === "model_y" ? "Model Y" : "Model 3"} tracked, sold ones included — not the filters above.
+        </p>
+      </div>
+      <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-surface-2 p-0.5">
+        {WINDOWS.map((w) => (
+          <button
+            key={w.days}
+            type="button"
+            onClick={() => setWindowDays(w.days)}
+            aria-pressed={windowDays === w.days}
+            className={`rounded-[6px] px-2.5 py-1 text-xs font-medium transition-colors ${
+              windowDays === w.days
+                ? "bg-accent text-accent-ink"
+                : "text-secondary hover:bg-surface-3 hover:text-primary"
+            }`}
+          >
+            {w.label}
+          </button>
+        ))}
+      </div>
+    </header>
+  );
+
   if (days.length < MIN_DAYS) {
+    // Two different nothings. A run that has only happened twice has no
+    // trend to draw yet; a record that stops before this window began has
+    // one, just not here - and telling that user "not enough history" while
+    // hiding the selector leaves them in a dead end with the way out
+    // removed.
+    const staleWindow = forModel.length >= MIN_DAYS;
     return (
       <section className="rounded-xl border border-border bg-surface-1 shadow-[var(--shadow-1)]">
-        <header className="border-b border-border px-4 py-2.5">
-          <h2 className="text-sm font-semibold leading-tight text-primary">Market movement</h2>
-        </header>
+        {header}
         <p className="px-4 py-6 text-center text-sm text-muted">
-          Not enough history yet — this fills in one day per scrape.
-          {days.length > 0 && ` ${days.length} day${days.length === 1 ? "" : "s"} recorded so far.`}
+          {staleWindow ? (
+            <>
+              Nothing recorded in {windowText} — the {forModel.length} days on record are older than that. Try “All”.
+            </>
+          ) : (
+            <>
+              Not enough history yet — this fills in one day per scrape.
+              {forModel.length > 0 && ` ${forModel.length} day${forModel.length === 1 ? "" : "s"} recorded so far.`}
+            </>
+          )}
         </p>
       </section>
     );
@@ -87,31 +128,7 @@ export function MarketTrendChart({ history, model }: MarketTrendChartProps) {
 
   return (
     <section className="rounded-xl border border-border bg-surface-1 shadow-[var(--shadow-1)]">
-      <header className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-border px-4 py-2.5">
-        <div className="min-w-0">
-          <h2 className="text-sm font-semibold leading-tight text-primary">Market movement</h2>
-          <p className="mt-0.5 text-xs text-muted">
-            Every {model === "model_y" ? "Model Y" : "Model 3"} tracked, sold ones included — not the filters above.
-          </p>
-        </div>
-        <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-surface-2 p-0.5">
-          {WINDOWS.map((w) => (
-            <button
-              key={w.days}
-              type="button"
-              onClick={() => setWindowDays(w.days)}
-              aria-pressed={windowDays === w.days}
-              className={`rounded-[6px] px-2.5 py-1 text-xs font-medium transition-colors ${
-                windowDays === w.days
-                  ? "bg-accent text-accent-ink"
-                  : "text-secondary hover:bg-surface-3 hover:text-primary"
-              }`}
-            >
-              {w.label}
-            </button>
-          ))}
-        </div>
-      </header>
+      {header}
 
       <div className="px-4 pb-3 pt-3">
         {/* The big number is the median's own move, so it says exactly what

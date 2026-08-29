@@ -49,11 +49,28 @@ class PricePoint:
     price_original: float
 
 
+def _priced(snapshot: ListingSnapshot) -> bool:
+    """A zero is not a price.
+
+    Nothing stores one deliberately, but a source that cannot find the
+    number on a card falls back to it - AutoScout24's parser reads
+    `priceRaw or 0` - so one bad card becomes a snapshot asking nothing.
+    Left in, that snapshot reads as a seller who dropped their price to
+    zero: a "100% off" badge at the top of the biggest-drop sort, and a
+    day of the market index dragged down by a car nobody is selling for
+    nothing. Both questions here are about prices, so a row without one
+    has no place in either answer.
+    """
+    return bool(snapshot.price_original and snapshot.price_original > 0 and snapshot.price_eur > 0)
+
+
 def price_points(snapshots: list[ListingSnapshot]) -> list[PricePoint]:
     """One point per price the seller actually set, oldest first."""
     points: list[PricePoint] = []
     previous: tuple[str, float] | None = None
     for snapshot in sorted(snapshots, key=lambda s: s.observed_at):
+        if not _priced(snapshot):
+            continue
         asked = (snapshot.currency_original, snapshot.price_original)
         if asked == previous:
             continue
@@ -100,7 +117,7 @@ def market_history(
     by_day: dict[tuple[str, date], dict[str, tuple[float, float]]] = defaultdict(dict)
     for snapshot in snapshots:
         model = model_of.get(snapshot.listing_id)
-        if model is None:
+        if model is None or not _priced(snapshot):
             continue
         # One snapshot per listing per day: a day scraped twice would
         # otherwise weight those cars double in the median.
