@@ -72,7 +72,12 @@ export function sellerGroup(sellerType: Listing["sellerType"]): string {
 }
 
 export function registrationYear(listing: Listing): number | null {
-  if (listing.firstRegistration) return new Date(listing.firstRegistration).getFullYear();
+  // Read off the string, not through Date. new Date("2023-01-01") is UTC
+  // midnight, and a LOCAL getter west of UTC lands on 2022-12-31: every
+  // registration date this project stores is a first-of-month, so for an
+  // American viewer every car shifted a month back and the January ones a
+  // whole year - year filter, palette and deal age alike.
+  if (listing.firstRegistration) return Number(listing.firstRegistration.slice(0, 4));
   return listing.modelYear;
 }
 

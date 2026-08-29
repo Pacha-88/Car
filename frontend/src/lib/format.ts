@@ -14,8 +14,10 @@ export function formatKm(value: number): string {
 
 export function formatYearMonth(iso: string | null): string | null {
   if (!iso) return null;
-  const d = new Date(iso);
-  return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}`;
+  // Textual, not through Date: parsed as UTC midnight and read with local
+  // getters, every first-of-month date (which is all of them here) showed
+  // the previous month to anyone west of UTC.
+  return `${iso.slice(0, 4)}/${iso.slice(5, 7)}`;
 }
 
 /** A signed percentage from a ratio: 0.12 → "+12%", -0.083 → "−8%". */

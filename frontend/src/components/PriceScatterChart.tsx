@@ -43,6 +43,8 @@ interface PriceScatterChartProps {
 
 const HIT_RADIUS = 12; // >= 24px hit target per the dataviz skill's interaction guidance
 const DOT_RADIUS = 4;
+/** w-64 on the card below, plus a little breathing room. */
+const HOVER_CARD_WIDTH = 264;
 
 export function PriceScatterChart({
   listings,
@@ -60,7 +62,7 @@ export function PriceScatterChart({
         listing: l,
         mileageKm: l.mileageKm as number,
         priceEur: l.priceEur,
-        year: l.firstRegistration ? new Date(l.firstRegistration).getFullYear() : (l.modelYear ?? 0),
+        year: l.firstRegistration ? Number(l.firstRegistration.slice(0, 4)) : (l.modelYear ?? 0),
       }))
       .filter((p) => p.year > 0);
     return withYear.map((p) => ({
@@ -88,7 +90,7 @@ export function PriceScatterChart({
   // per data change and record their pixel positions; the container's
   // mousemove finds the nearest recorded mark, and the ring and card are
   // overlays that never touch the chart itself.
-  const [active, setActive] = useState<{ point: ScatterPoint; x: number; y: number } | null>(null);
+  const [active, setActive] = useState<{ point: ScatterPoint; x: number; y: number; plotW: number; plotH: number } | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   // One stable map for the marks' pixel positions; DotsLayer rewrites it in
   // full on every chart render, so it always matches what is on screen.
@@ -125,7 +127,10 @@ export function PriceScatterChart({
         best = mark;
       }
     }
-    return best;
+    if (!best) return null;
+    // The plot's real size rides along so the hover card can flip against
+    // the edge that actually exists, not a hardcoded one.
+    return { ...best, plotW: rect.width, plotH: rect.height };
   };
 
   const trend = useMemo(
@@ -171,7 +176,7 @@ export function PriceScatterChart({
             if (!mark) return null;
             return cur?.point.listing.id === mark.point.listing.id
               ? cur
-              : { point: mark.point, x: mark.cx, y: mark.cy };
+              : { point: mark.point, x: mark.cx, y: mark.cy, plotW: mark.plotW, plotH: mark.plotH };
           });
         }}
         onClick={(e) => {
@@ -220,12 +225,14 @@ export function PriceScatterChart({
             // pointer-events island below.
             className="pointer-events-none absolute z-10"
             style={{
-              // Offset from the mark, flipping near the right/bottom edges so
-              // the card stays inside the plot.
-              left: active.x > 900 ? undefined : active.x + 16,
-              right: active.x > 900 ? 16 : undefined,
-              top: active.y > 220 ? undefined : active.y + 16,
-              bottom: active.y > 220 ? 16 : undefined,
+              // Offset from the mark, flipped when the card would not fit on
+              // that side. Measured against the plot's own size at hover
+              // time - these were hardcoded (x > 900) and on a 1024px window
+              // the rightmost dot put the card 185px past the viewport.
+              left: active.x + 16 + HOVER_CARD_WIDTH > active.plotW ? undefined : active.x + 16,
+              right: active.x + 16 + HOVER_CARD_WIDTH > active.plotW ? 16 : undefined,
+              top: active.y > active.plotH / 2 ? undefined : active.y + 16,
+              bottom: active.y > active.plotH / 2 ? 16 : undefined,
             }}
           >
             <HoverCard

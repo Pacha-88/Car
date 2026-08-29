@@ -227,7 +227,7 @@ function Dashboard({ data }: { data: ReturnType<typeof useListings> }) {
   const paletteMaxYear = useMemo(() => {
     let max = 0;
     for (const l of modelListings) {
-      const y = l.firstRegistration ? new Date(l.firstRegistration).getFullYear() : (l.modelYear ?? 0);
+      const y = l.firstRegistration ? Number(l.firstRegistration.slice(0, 4)) : (l.modelYear ?? 0);
       if (y > max) max = y;
     }
     return max || new Date().getFullYear();
