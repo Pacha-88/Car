@@ -198,17 +198,20 @@ from car_tracker.sources.tesla import listing_url, stock_photo
 @pytest.mark.parametrize(
     ("country", "expected"),
     [
-        ("DE", "https://www.tesla.com/de_DE/my/order/VIN123?titleStatus=used"),
-        ("AT", "https://www.tesla.com/de_AT/my/order/VIN123?titleStatus=used"),
-        ("HU", "https://www.tesla.com/hu_HU/my/order/VIN123?titleStatus=used"),
+        ("DE", "https://www.tesla.com/de_DE/inventory/used/my"),
+        ("AT", "https://www.tesla.com/de_AT/inventory/used/my"),
+        ("HU", "https://www.tesla.com/hu_HU/inventory/used/my"),
     ],
 )
-def test_listing_url_is_the_order_deep_link(country, expected):
+def test_listing_url_is_the_market_inventory_page(country, expected):
+    """Two per-car patterns have now 404'd and tesla.com cannot be reached
+    from here to check a third. The market's own used-inventory page cannot
+    404 and is sorted the same way this scraper queries it."""
     assert listing_url("model_y", country, "VIN123") == expected
 
 
 def test_listing_url_model_3():
-    assert listing_url("model_3", "DE", "V") == "https://www.tesla.com/de_DE/m3/order/V?titleStatus=used"
+    assert listing_url("model_3", "DE", "V") == "https://www.tesla.com/de_DE/inventory/used/m3"
 
 
 def test_inspection_photos_win_over_the_render():

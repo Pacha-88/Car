@@ -37,6 +37,7 @@ from __future__ import annotations
 import re
 import time
 from datetime import date
+from html import unescape
 
 import httpx
 
@@ -183,7 +184,14 @@ class HasznaltautoSource(Source):
                     raise PartialResults(listings, str(unreadable)) from unreadable
                 raise unreadable
             listings.extend(parsed)
-            print(f"    hasznaltauto/{model}: page {page} - {len(parsed)} of {len(chunks)} rows read")
+            note = ""
+            if len(parsed) * 3 < len(chunks) * 2:  # fewer than two rows in three
+                # A page that yields one car out of twenty-five is a pattern
+                # that has half given out, and it went by as a plain "page 1
+                # read" line while twenty-four cars quietly vanished. Loud
+                # enough to notice, not so loud it fails a usable page.
+                note = "  <-- most of this page could NOT be read, the markup is drifting"
+            print(f"    hasznaltauto/{model}: page {page} - {len(parsed)} of {len(chunks)} rows read{note}")
 
             if last_page is not None and page >= last_page:
                 break  # the page said so itself; asking for page N+1 gets a 404
@@ -253,17 +261,28 @@ def _listing_id(chunk: str, href: str | None) -> str | None:
     return hirkod.group(1) if hirkod else None
 
 
+# The prices are written with non-breaking spaces. The server sends the
+# character; a browser's DOM serializer writes it back as the ENTITY, and
+# this module reads its pages through a browser - so what actually arrived
+# was "10&nbsp;390&nbsp;000&nbsp;Ft", where every pattern here was looking
+# for digits and whitespace. That one difference between the pasted sample
+# and the live page cost every car on every page.
+_NBSP_RE = re.compile(r"&nbsp;|&#160;|&#xa0;", re.I)
+
+
 def _split_listings(html: str) -> list[str]:
     """Each listing row, from its own opening <div> to the next one's.
 
     See the module docstring: the rows have no unique closing marker, so the
-    page is cut at each row's opening tag instead.
+    page is cut at each row's opening tag instead. Non-breaking spaces are
+    normalised to ordinary ones here, once, so no pattern downstream has to
+    know which of the two spellings this page happens to use.
     """
     starts = [m.start() for m in _LISTING_START_RE.finditer(html)]
     if not starts:
         return []
     bounds = [*starts, len(html)]
-    return [html[bounds[i] : bounds[i + 1]] for i in range(len(starts))]
+    return [_NBSP_RE.sub(" ", html[bounds[i] : bounds[i + 1]]) for i in range(len(starts))]
 
 
 def parse_item(chunk: str, *, model: str) -> RawListing | None:
@@ -279,7 +298,7 @@ def parse_item(chunk: str, *, model: str) -> RawListing | None:
     mileage_match = _MILEAGE_RE.search(chunk)
     seller_match = _SELLER_RE.search(chunk)
     image_match = _IMAGE_RE.search(chunk)
-    title_text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", title_url.group(2))).strip()
+    title_text = unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", title_url.group(2)))).strip()
 
     return RawListing(
         source="hasznaltauto",
@@ -321,8 +340,9 @@ def _strip_tags(html: str) -> str:
     return re.sub(r"<[^>]+>", "", html)
 
 
-def _price_neighbourhood(chunk: str) -> str:
+def _price_neighbourhood(raw_chunk: str) -> str:
     """What the row says around its "Ft"s - for when none of the three worked."""
+    chunk = _NBSP_RE.sub(" ", raw_chunk)
     seen = [re.sub(r"\s+", " ", chunk[max(0, m.start() - 90) : m.end() + 10]) for m in _PRICE_BARE_RE.finditer(chunk)]
     if not seen:
         seen = [re.sub(r"\s+", " ", chunk[max(0, m.start() - 40) : m.start() + 90]) for m in re.finditer(r"Ft", chunk)]

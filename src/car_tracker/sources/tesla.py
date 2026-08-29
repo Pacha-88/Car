@@ -55,18 +55,29 @@ MARKET_LOCALES = {"DE": "de_DE", "AT": "de_AT", "HU": "hu_HU"}
 
 
 def listing_url(model: str, country: str, vin: str) -> str:
-    """The order page for one used car.
+    """Where to send someone who clicks a Tesla listing.
 
-    The first guess here - /{cc}/inventory/used/{model}/{vin} - was marked
-    unverified in this file and turned out to 404 on every listing (the
-    inventory path is the *search* page, which takes no VIN). The pattern
-    community inventory trackers have deep-linked for years is the order
-    page: tesla.com/{locale}/{model}/order/{VIN}. Unverifiable from this
-    sandbox (tesla.com refuses datacenter traffic outright), so the proof
-    is a click after the next scrape-local run.
+    Not a per-car link, on purpose, for now. Two per-car patterns have been
+    tried and both 404 on every listing:
+
+      /{cc}/inventory/used/{model}/{vin}   - the inventory path is the
+                                             search page and takes no VIN
+      /{locale}/{model}/order/{VIN}        - the order deep link community
+                                             trackers use for NEW inventory
+
+    tesla.com answers 403 to this sandbox, so a third guess could only be
+    checked by shipping it and waiting for another run to fail. The market's
+    own used-inventory page cannot 404, is sorted by price ascending exactly
+    as this scraper queries it, and so has the car a click away.
+
+    Restoring the per-car link needs one fact, and the run now prints it:
+    `_report_link_fields` lists the fields a real car carries. If Tesla
+    hands us the URL, or anything containing the VIN, that line names it.
+    Failing that, opening the inventory page below and clicking any car
+    gives the pattern in ten seconds.
     """
     locale = MARKET_LOCALES.get(country, "en_US")
-    return f"https://www.tesla.com/{locale}/{MODEL_CODES[model]}/order/{vin}?titleStatus=used"
+    return f"https://www.tesla.com/{locale}/inventory/used/{MODEL_CODES[model]}"
 
 
 def stock_photo(item: dict, *, model: str) -> list[str]:
@@ -125,10 +136,13 @@ class TeslaSource(Source):
         listings: list[RawListing] = []
         pages_done = 0
         photoless_sample: dict | None = None
+        first_item: dict | None = None
         unparsable: tuple[int, str] = (0, "")
         try:
             for page_num, (offset, results, total) in enumerate(self._iter_pages(model, country), start=1):
                 for item in results:
+                    if first_item is None:
+                        first_item = item
                     try:
                         raw = parse_item(item, model=model, country=country)
                     except Exception as exc:  # noqa: BLE001 - see below
@@ -192,6 +206,7 @@ class TeslaSource(Source):
                     f" read - {unparsable[1]}"
                 )
         self._report_photoless(listings, photoless_sample, model=model, country=country)
+        self._report_link_fields(first_item, model=model, country=country)
         return listings
 
     @staticmethod
@@ -213,6 +228,29 @@ class TeslaSource(Source):
             f"    tesla/{model}/{country}: {photoless} of {len(listings)} cars have no photos and no"
             f" recognised option codes - fields on one such car: {sorted(sample.keys())}"
         )
+
+    @staticmethod
+    def _report_link_fields(sample: dict | None, *, model: str, country: str) -> None:
+        """Print the fields a real car carries, once per market.
+
+        Two guesses at the per-car tesla.com URL have now 404'd, and this
+        sandbox cannot open tesla.com to check a third (it answers 403 to
+        datacenter traffic). Rather than guess again, print what the API
+        actually hands us: if the response carries the link, or anything
+        holding the VIN, this line ends the question in one run.
+        """
+        if sample is None:
+            return
+        vin = str(sample.get("VIN", ""))
+        interesting = {
+            key: str(value)[:120]
+            for key, value in sample.items()
+            if isinstance(value, str)
+            and (value.startswith("http") or value.startswith("/") or (vin and vin in value and key != "VIN"))
+        }
+        print(f"    tesla/{model}/{country}: fields on one car: {sorted(sample)}")
+        if interesting:
+            print(f"    tesla/{model}/{country}: link-shaped fields: {interesting}")
 
     def fetch_raw_page(self, *, model: str, country: str, offset: int = 0) -> dict:
         """One raw page, unparsed — for inspecting the real response shape.
@@ -264,16 +302,19 @@ def _results_of(data: dict, *, model: str, country: str) -> list[dict]:
         return cars
     if isinstance(results, dict):
         exact = results.get("exact")
-        cars = [r for r in exact if isinstance(r, dict)] if isinstance(exact, list) else []
-        if not cars:
-            # Say what was actually in there rather than reporting an empty
-            # market: this is the shape that already cost one whole market.
-            print(
-                f"    tesla/{model}/{country}: the API answered with an object instead of a list of"
-                f" cars, and its \"exact\" bucket held nothing usable - keys present:"
-                f" {sorted(results)}"
-            )
-        return cars
+        if isinstance(exact, list):
+            # An empty "exact" alongside "approximate"/"approximateOutside"
+            # is Tesla saying this market has none of these and offering
+            # cars from elsewhere instead - a genuinely empty market, not a
+            # fault. Only the count is worth a line.
+            if not exact:
+                print(f"    tesla/{model}/{country}: no used {model} in this market (Tesla offered nearby ones instead)")
+            return [r for r in exact if isinstance(r, dict)]
+        print(
+            f"    tesla/{model}/{country}: the API answered with an object that has no \"exact\" list"
+            f" of cars - keys present: {sorted(results)}"
+        )
+        return []
     if results is not None:
         _report_odd_results(results, model=model, country=country)
     return []

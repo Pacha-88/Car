@@ -14,6 +14,11 @@ from car_tracker.sources.hasznaltauto import (
 )
 
 FIXTURE_HTML = (Path(__file__).parent / "fixtures" / "hasznaltauto_search_sample.html").read_text(encoding="utf-8")
+# The same page as a BROWSER hands it back - which is how this source
+# actually reads it. See the fixture's own header.
+BROWSER_DOM_HTML = (Path(__file__).parent / "fixtures" / "hasznaltauto_browser_dom_sample.html").read_text(
+    encoding="utf-8"
+)
 
 
 @pytest.fixture
@@ -345,3 +350,59 @@ def test_an_unreadable_price_says_what_the_row_says_around_its_Ft(monkeypatch):
     assert "missing: price" in message
     assert "price area of the first row" in message
     assert "pricefield" in message, "the quoted neighbourhood must show the real markup"
+
+
+# --- the shape the live site actually serves ------------------------------
+# The server writes a non-breaking space as the character; page.content()
+# writes it back as the &nbsp; ENTITY. Every pattern here was looking for
+# digits and whitespace, so "10&nbsp;390&nbsp;000&nbsp;Ft" matched nothing -
+# and this source reads its pages through a browser. That single difference
+# between the pasted sample and the live page cost every car on every page.
+
+
+def test_a_browser_serialized_page_parses_exactly_like_the_server_one():
+    server = [parse_item(c, model="model_y") for c in _split_listings(FIXTURE_HTML)]
+    browser = [parse_item(c, model="model_y") for c in _split_listings(BROWSER_DOM_HTML)]
+
+    assert all(row is not None for row in browser), "&nbsp; must not make a row unreadable"
+    assert len(browser) == len(server) == 3
+    for from_server, from_browser in zip(server, browser, strict=True):
+        assert from_browser.source_listing_id == from_server.source_listing_id
+        assert from_browser.price_original == from_server.price_original
+        assert from_browser.mileage_km == from_server.mileage_km
+        assert from_browser.first_registration == from_server.first_registration
+        assert from_browser.power_kw == from_server.power_kw
+
+
+def test_the_entity_price_is_the_asking_price_not_the_struck_through_one():
+    assert "10&nbsp;500&nbsp;000" in BROWSER_DOM_HTML, "the fixture must carry the old price to be beaten"
+    row = _split_listings(BROWSER_DOM_HTML)[0]
+    assert parse_item(row, model="model_y").price_original == 10_390_000
+
+
+def test_a_browser_serialized_walk_reads_every_page(monkeypatch, capsys):
+    monkeypatch.setattr(hasznaltauto_module.time, "sleep", lambda _s: None)
+    source = _CountingSource(BROWSER_DOM_HTML)
+
+    listings = source.fetch_listings(model="model_y", country="HU")
+
+    assert source.attempted == list(range(1, 16))
+    assert len(listings) == 15 * 3
+    assert "could NOT be read" not in capsys.readouterr().out
+
+
+def test_a_page_that_yields_almost_nothing_says_so(capsys, monkeypatch):
+    """One car read out of twenty-five went by as a plain "page 1 read" line.
+
+    That is a pattern half given out, and twenty-four cars vanishing
+    quietly - which is exactly how it showed up on model_3.
+    """
+    monkeypatch.setattr(hasznaltauto_module.time, "sleep", lambda _s: None)
+    rows = _split_listings(BROWSER_DOM_HTML)
+    # Two rows readable, three not: below half.
+    thin = rows[0] + _without_prices(rows[1]) + _without_prices(rows[2]) + rows[0].replace("23417259", "23417260")
+    page = f'<html><head><link href="/szemelyauto/tesla/model_y/page1" rel="last"></head><body>{thin}</body></html>'
+
+    _CountingSource(page).fetch_listings(model="model_y", country="HU")
+
+    assert "most of this page could NOT be read" in capsys.readouterr().out
