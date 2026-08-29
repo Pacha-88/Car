@@ -20,6 +20,42 @@ const DEAL_TIERS_KEPT = new Set(["great", "good"]);
 const MIN_BUCKET_SIZE = 10;
 const REFERENCE_KM_FOR_EXCLUSION = 60_000;
 
+/** The one segmented-control look, shared by the model tabs and the
+ * display toggles - a single raised strip, the selected cell inverted. */
+function Segmented({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-surface-1 p-0.5 shadow-[var(--shadow-1)]">
+      {children}
+    </div>
+  );
+}
+
+function SegmentedButton({
+  active,
+  onClick,
+  children,
+  title,
+}: {
+  active?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+  title?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      aria-pressed={active}
+      className={`rounded-[6px] px-2.5 py-1 text-xs font-medium transition-colors ${
+        active ? "bg-accent text-accent-ink" : "text-secondary hover:bg-surface-2 hover:text-primary"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
 function ThemeToggle() {
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     return (localStorage.getItem("car-tracker.theme") as "dark" | "light" | null) ?? "dark";
@@ -29,13 +65,12 @@ function ThemeToggle() {
     localStorage.setItem("car-tracker.theme", theme);
   }, [theme]);
   return (
-    <button
-      type="button"
+    <SegmentedButton
       onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
-      className="rounded-md border border-border px-2 py-1 text-xs text-secondary hover:text-primary"
+      title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
     >
-      {theme === "dark" ? "☀︎ Light" : "☾ Dark"}
-    </button>
+      {theme === "dark" ? "☀︎" : "☾"}
+    </SegmentedButton>
   );
 }
 
@@ -45,14 +80,12 @@ function CurrencyToggle() {
   // button that silently does nothing is worse than no button.
   if (hufPerEur === null) return null;
   return (
-    <button
-      type="button"
+    <SegmentedButton
       onClick={() => setCurrency(currency === "HUF" ? "EUR" : "HUF")}
-      title={`1 € = ${Math.round(hufPerEur)} Ft (last scrape)`}
-      className="rounded-md border border-border px-2 py-1 text-xs text-secondary hover:text-primary"
+      title={`Showing ${currency} · 1 € = ${Math.round(hufPerEur)} Ft at the last scrape`}
     >
       {currency === "HUF" ? "Ft" : "€"}
-    </button>
+    </SegmentedButton>
   );
 }
 
@@ -186,37 +219,40 @@ function Dashboard({ data }: { data: ReturnType<typeof useListings> }) {
   }
 
   return (
-    <div className="mx-auto max-w-[1400px] px-4 py-4">
-      <header className="mb-4 flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="mb-2 flex gap-1 rounded-lg bg-surface-1 p-1 text-sm">
-            {(["model_y", "model_3"] as const).map((m) => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => setModel(m)}
-                className={`rounded-md px-3 py-1 font-medium ${
-                  model === m ? "bg-series-1 text-white" : "text-secondary hover:text-primary"
-                }`}
-              >
-                {m === "model_y" ? "Model Y" : "Model 3"}
-              </button>
-            ))}
+    <div className="mx-auto max-w-[1400px] px-5 py-5">
+      <header className="mb-5 flex flex-col gap-4">
+        <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
+          <div className="min-w-0">
+            <div className="eyebrow">Used market · Germany · Austria · Hungary</div>
+            <h1 className="mt-1.5 text-[22px] font-semibold leading-none tracking-tight text-primary">
+              Tesla {model === "model_y" ? "Model Y" : "Model 3"}
+            </h1>
+            {latestScrapeDate && (
+              <p className="mt-1.5 flex items-center gap-1.5 text-xs text-muted">
+                <span className="h-1.5 w-1.5 rounded-full bg-status-good" aria-hidden />
+                Last scraped {latestScrapeDate}
+              </p>
+            )}
           </div>
-          <div className="text-[10px] uppercase tracking-wide text-muted">Germany · Austria · Hungary — used market</div>
-          <h1 className="text-lg font-semibold text-primary">
-            Tesla {model === "model_y" ? "Model Y" : "Model 3"} — price vs mileage
-          </h1>
-          {latestScrapeDate && <p className="text-xs text-muted">Last scraped {latestScrapeDate}</p>}
+          <div className="flex items-center gap-2">
+            <Segmented>
+              {(["model_y", "model_3"] as const).map((m) => (
+                <SegmentedButton key={m} active={model === m} onClick={() => setModel(m)}>
+                  {m === "model_y" ? "Model Y" : "Model 3"}
+                </SegmentedButton>
+              ))}
+            </Segmented>
+            <Segmented>
+              <CurrencyToggle />
+              <ThemeToggle />
+            </Segmented>
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          <StatTiles listings={displayed} eurPer10kKm={eurPer10kKm} />
-          <CurrencyToggle />
-          <ThemeToggle />
-        </div>
+
+        <StatTiles listings={displayed} eurPer10kKm={eurPer10kKm} />
       </header>
 
-      <div className="mb-4">
+      <div className="mb-5">
         <FilterBar
           filters={filters}
           onChange={setFilters}
@@ -228,7 +264,7 @@ function Dashboard({ data }: { data: ReturnType<typeof useListings> }) {
         />
       </div>
 
-      <div className="mb-4">
+      <div className="mb-5">
         <ErrorBoundary label="The price chart">
           <PriceScatterChart
             listings={highlighted}
@@ -240,7 +276,7 @@ function Dashboard({ data }: { data: ReturnType<typeof useListings> }) {
         </ErrorBoundary>
       </div>
 
-      <div className="mb-4">
+      <div className="mb-5">
         <ErrorBoundary label="The depreciation module">
           <DepreciationModule listings={displayed} />
         </ErrorBoundary>

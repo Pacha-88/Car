@@ -25,6 +25,46 @@ export interface FilterState {
   showExcluded: boolean;
 }
 
+/**
+ * One click model for every facet row, whichever way its set is stored.
+ *
+ * The two storage shapes are historical and stay as they are (an
+ * all-selected set means "no country filter"; an EMPTY colour set means "no
+ * colour filter"), but from the user's side they now behave identically:
+ *
+ *   nothing narrowed  -> a click isolates that one value
+ *   already narrowed  -> a click adds or removes it
+ *   removed the last  -> back to nothing narrowed
+ *
+ * Before this, clicking a country chip EXCLUDED it while clicking a colour
+ * chip INCLUDED it - two opposite meanings behind identical-looking pills,
+ * which is what "the colour filter doesn't work" actually was.
+ */
+export type FacetMode = "all-selected" | "opt-in";
+
+export function isFacetNarrowed(current: Set<string>, options: string[], mode: FacetMode): boolean {
+  return mode === "opt-in" ? current.size > 0 : options.some((o) => !current.has(o));
+}
+
+export function toggleFacet(
+  current: Set<string>,
+  value: string,
+  options: string[],
+  mode: FacetMode,
+): Set<string> {
+  if (!isFacetNarrowed(current, options, mode)) return new Set([value]);
+  const next = new Set(current);
+  if (next.has(value)) next.delete(value);
+  else next.add(value);
+  if (next.size === 0) return mode === "opt-in" ? new Set() : new Set(options);
+  return next;
+}
+
+/** "Clear this group" - back to the shape that means "no filter here". */
+export function clearFacet(options: string[], mode: FacetMode): Set<string> {
+  return mode === "opt-in" ? new Set() : new Set(options);
+}
+
 export function sellerGroup(sellerType: Listing["sellerType"]): string {
   return sellerType === "private" ? "private" : "dealer";
 }

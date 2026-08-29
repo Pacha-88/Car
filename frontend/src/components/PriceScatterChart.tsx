@@ -126,20 +126,24 @@ export function PriceScatterChart({
 
   if (points.length === 0) {
     return (
-      <div className="flex h-[420px] items-center justify-center rounded-lg border border-border bg-surface-1 text-sm text-muted">
+      <div className="flex h-[420px] items-center justify-center rounded-xl border border-border bg-surface-1 text-sm text-muted shadow-[var(--shadow-1)]">
         No listings match the current filters.
       </div>
     );
   }
 
   return (
-    <div className="rounded-lg border border-border bg-surface-1 p-4">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <div className="text-xs text-muted">
-          Each point is a listing, coloured by registration year. Hover for detail, click to open the ad.
+    <section className="rounded-xl border border-border bg-surface-1 shadow-[var(--shadow-1)]">
+      <header className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-border px-4 py-2.5">
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold leading-tight text-primary">Price vs mileage</h2>
+          <p className="mt-0.5 text-xs text-muted">
+            Each point is a listing, coloured by registration year. Hover for detail, click to open the ad.
+          </p>
         </div>
         {years.length > 1 && <YearLegend years={years} maxYear={maxYear} />}
-      </div>
+      </header>
+      <div className="px-4 pb-3 pt-3">
 
       {/* `relative` anchors the hover card, which is positioned from the
           hovered mark's own SVG coordinates. */}
@@ -222,9 +226,25 @@ export function PriceScatterChart({
             />
           </div>
         )}
+        </div>
       </div>
-    </div>
+    </section>
   );
+}
+
+/** Pad a data range by 6% on each side and snap both ends outward to a
+ * round step (~5 ticks), so the axis reads in whole numbers without the
+ * marks touching the frame. Never dips below zero - a negative asking
+ * price is not a thing. */
+function niceDomain(lo: number, hi: number): [number, number] {
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) {
+    return [Math.max(0, lo - 1), hi + 1];
+  }
+  const pad = (hi - lo) * 0.06;
+  const rawStep = (hi - lo + 2 * pad) / 5;
+  const magnitude = 10 ** Math.floor(Math.log10(rawStep));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * magnitude).find((s) => s >= rawStep) ?? 10 * magnitude;
+  return [Math.max(0, Math.floor((lo - pad) / step) * step), Math.ceil((hi + pad) / step) * step];
 }
 
 /** The Recharts subtree, memoized: 2.000+ marks make it the expensive part
@@ -256,9 +276,13 @@ const ChartBody = memo(function ChartBody({
     const top = Math.max(...points.map((p) => p.mileageKm), 1);
     return Math.ceil(top / 25_000) * 25_000;
   }, [points]);
-  const yMax = useMemo(() => {
-    const top = Math.max(...points.map((p) => p.priceEur), 1);
-    return Math.ceil(top / 5_000) * 5_000;
+  // A dot plot has no baseline to grow from, so - unlike a bar chart - it
+  // is not obliged to include zero, and forcing it wasted the bottom 60% of
+  // the plot on an empty band no listing will ever fall in. The domain is
+  // the data's own range, padded and snapped to a round tick step.
+  const yDomain = useMemo(() => {
+    const prices = points.map((p) => p.priceEur);
+    return niceDomain(Math.min(...prices), Math.max(...prices));
   }, [points]);
   return (
     <ResponsiveContainer width="100%" height={420}>
@@ -278,7 +302,7 @@ const ChartBody = memo(function ChartBody({
           <YAxis
             dataKey="priceEur"
             type="number"
-            domain={[0, yMax]}
+            domain={yDomain}
             allowDataOverflow
             name="Price"
             tickFormatter={formatTick}
@@ -372,8 +396,8 @@ function YearLegend({ years, maxYear }: { years: number[]; maxYear: number }) {
   const entries = yearLegendEntries(years, maxYear);
   return (
     <div className="flex shrink-0 items-center gap-2 text-[10px] text-muted">
-      <span className="uppercase tracking-wide">Reg. year</span>
-      <div className="flex items-center gap-1.5">
+      <span className="eyebrow">Reg. year</span>
+      <div className="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-2 py-1">
         {entries.map((e) => (
           <span key={e.label} className="flex items-center gap-1 text-secondary">
             {/* The swatch mirrors the mark, so the legend teaches the

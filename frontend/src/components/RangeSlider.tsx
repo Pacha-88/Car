@@ -18,17 +18,17 @@ export function RangeSlider({ label, min, max, value, onChange, formatValue, ste
   const hiPct = ((hi - min) / range) * 100;
 
   return (
-    <div className="min-w-[180px]">
-      <div className="mb-1 flex items-center justify-between text-[10px] uppercase tracking-wide text-muted">
-        <span>{label}</span>
-        <span className="tabular normal-case text-secondary">
+    <div className="w-full min-w-[190px] max-w-[260px] flex-1">
+      <div className="mb-1.5 flex items-center justify-between gap-4">
+        <span className="eyebrow">{label}</span>
+        <span className="numeral text-[11px] font-medium text-secondary">
           {formatValue(lo)} – {formatValue(hi)}
         </span>
       </div>
       <div className="relative h-4">
         <div className="absolute top-1/2 h-1 w-full -translate-y-1/2 rounded-full bg-baseline" />
         <div
-          className="absolute top-1/2 h-1 -translate-y-1/2 rounded-full bg-series-1"
+          className="absolute top-1/2 h-1 -translate-y-1/2 rounded-full bg-muted"
           style={{ left: `${loPct}%`, right: `${100 - hiPct}%` }}
         />
         <input

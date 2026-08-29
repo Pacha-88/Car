@@ -48,24 +48,31 @@ export function ListingGrid({ listings, watchlist, onToggleWatchlist, dealScores
 
   return (
     <div>
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold text-primary">
-          Listings <span className="font-normal text-muted">{listings.length} matching the filters above</span>
-        </h2>
-        <div className="flex items-center gap-3 text-xs">
-          <div className="flex overflow-hidden rounded-md border border-border">
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
+        <div className="min-w-0">
+          <div className="eyebrow">Listings</div>
+          <h2 className="mt-1 text-sm font-semibold leading-tight text-primary">
+            <span className="numeral">{listings.length}</span>{" "}
+            <span className="font-normal text-muted">matching the filters above</span>
+          </h2>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-surface-1 p-0.5">
             {(["grid", "list"] as const).map((v) => (
               <button
                 key={v}
                 type="button"
                 onClick={() => setView(v)}
-                className={`px-2.5 py-1 capitalize ${view === v ? "bg-series-1/20 text-primary" : "text-secondary hover:text-primary"}`}
+                aria-pressed={view === v}
+                className={`rounded-[6px] px-2.5 py-1 font-medium capitalize transition-colors ${
+                  view === v ? "bg-accent text-accent-ink" : "text-secondary hover:bg-surface-2 hover:text-primary"
+                }`}
               >
                 {v}
               </button>
             ))}
           </div>
-          <label className="flex items-center gap-1.5 text-secondary">
+          <label className="flex items-center gap-1.5 text-muted">
             Sort
             <select
               value={sort}
@@ -73,7 +80,7 @@ export function ListingGrid({ listings, watchlist, onToggleWatchlist, dealScores
                 setSort(e.target.value as SortKey);
                 setPage(0);
               }}
-              className="rounded-md border border-border bg-surface-1 px-1.5 py-1 text-primary"
+              className="cursor-pointer rounded-lg border border-border bg-surface-1 px-2 py-1.5 font-medium text-primary transition-colors hover:border-border-strong"
             >
               <option value="newest">Newest listings first</option>
               <option value="best_deal">Best deals first</option>
@@ -82,7 +89,7 @@ export function ListingGrid({ listings, watchlist, onToggleWatchlist, dealScores
               <option value="mileage_asc">Mileage: low to high</option>
             </select>
           </label>
-          <label className="flex items-center gap-1.5 text-secondary">
+          <label className="flex items-center gap-1.5 text-muted">
             Per page
             <select
               value={perPage}
@@ -90,7 +97,7 @@ export function ListingGrid({ listings, watchlist, onToggleWatchlist, dealScores
                 setPerPage(Number(e.target.value));
                 setPage(0);
               }}
-              className="rounded-md border border-border bg-surface-1 px-1.5 py-1 text-primary"
+              className="cursor-pointer rounded-lg border border-border bg-surface-1 px-2 py-1.5 font-medium text-primary transition-colors hover:border-border-strong"
             >
               {PAGE_SIZES.map((n) => (
                 <option key={n} value={n}>
@@ -103,7 +110,7 @@ export function ListingGrid({ listings, watchlist, onToggleWatchlist, dealScores
       </div>
 
       {pageItems.length === 0 ? (
-        <div className="rounded-lg border border-border bg-surface-1 p-6 text-center text-sm text-muted">
+        <div className="rounded-xl border border-border bg-surface-1 p-8 text-center text-sm text-muted">
           No listings match the current filters.
         </div>
       ) : view === "grid" ? (
@@ -138,18 +145,18 @@ export function ListingGrid({ listings, watchlist, onToggleWatchlist, dealScores
             type="button"
             disabled={clampedPage === 0}
             onClick={() => setPage(clampedPage - 1)}
-            className="rounded-md border border-border px-2 py-1 text-secondary disabled:opacity-30"
+            className="rounded-lg border border-border px-2.5 py-1.5 font-medium text-secondary transition-colors hover:border-border-strong hover:bg-surface-2 hover:text-primary disabled:opacity-30 disabled:hover:border-border disabled:hover:bg-transparent disabled:hover:text-secondary"
           >
             ← Prev
           </button>
-          <span className="tabular text-muted">
+          <span className="numeral px-1 text-muted">
             Page {clampedPage + 1} / {totalPages}
           </span>
           <button
             type="button"
             disabled={clampedPage >= totalPages - 1}
             onClick={() => setPage(clampedPage + 1)}
-            className="rounded-md border border-border px-2 py-1 text-secondary disabled:opacity-30"
+            className="rounded-lg border border-border px-2.5 py-1.5 font-medium text-secondary transition-colors hover:border-border-strong hover:bg-surface-2 hover:text-primary disabled:opacity-30 disabled:hover:border-border disabled:hover:bg-transparent disabled:hover:text-secondary"
           >
             Next →
           </button>
@@ -184,16 +191,22 @@ function ListingCard({
       href={listing.url}
       target="_blank"
       rel="noopener noreferrer"
-      className="group flex flex-col overflow-hidden rounded-lg border border-border bg-surface-1 transition-colors hover:border-series-1/50"
+      className="group flex flex-col overflow-hidden rounded-xl border border-border bg-surface-1 transition-[border-color,box-shadow,transform] duration-150 hover:-translate-y-px hover:border-border-strong hover:shadow-[var(--shadow-2)]"
     >
-      <div className="relative aspect-[4/3] w-full bg-surface-2">
+      <div className="relative aspect-[4/3] w-full overflow-hidden bg-surface-2">
         <ListingPhoto src={listing.photoUrls[0]} withLabel />
-        <span className="absolute left-1.5 top-1.5 flex items-center gap-1 rounded bg-surface-1/90 px-1.5 py-0.5 text-[10px] font-medium text-secondary">
+        {/* Scrim: the badges sit on whatever the photo happens to be, and a
+            white car under a white badge is unreadable without it. */}
+        <div
+          className="pointer-events-none absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-black/45 to-transparent"
+          aria-hidden
+        />
+        <span className="absolute left-1.5 top-1.5 flex items-center gap-1 rounded-md bg-surface-1/85 px-1.5 py-0.5 text-[10px] font-medium text-secondary backdrop-blur-sm">
           <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: SOURCE_COLOR_VAR[listing.source] }} />
           {COUNTRY_FLAGS[listing.country] ?? listing.country} {formatYearMonth(listing.firstRegistration) ?? "—"}
         </span>
         {listing.isNew && (
-          <span className="absolute right-1.5 top-1.5 rounded bg-status-warning px-1.5 py-0.5 text-[10px] font-semibold text-black">
+          <span className="absolute right-1.5 top-1.5 rounded-md bg-status-warning px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-black">
             NEW
           </span>
         )}
@@ -206,16 +219,16 @@ function ListingCard({
             e.preventDefault();
             onToggleWatchlist(listing.id);
           }}
-          className="absolute bottom-1.5 right-1.5 rounded-full bg-surface-1/90 px-1.5 py-0.5 text-xs"
+          className="absolute bottom-1.5 right-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-surface-1/85 text-xs text-secondary backdrop-blur-sm transition-colors hover:text-primary"
         >
           {watchlisted ? "★" : "☆"}
         </button>
       </div>
-      <div className="flex flex-1 flex-col gap-0.5 p-2">
+      <div className="flex flex-1 flex-col gap-0.5 p-2.5">
         <p className="line-clamp-2 text-[11px] font-medium leading-snug text-primary">{listingTitle(listing)}</p>
         <p className="text-[10px] text-muted">{subtitle(listing)}</p>
-        <div className="mt-auto flex items-baseline justify-between pt-1 tabular">
-          <span className="text-sm font-semibold text-primary">{money.format(listing.priceEur)}</span>
+        <div className="numeral mt-auto flex items-baseline justify-between gap-2 pt-1.5">
+          <span className="text-[15px] font-semibold leading-none text-primary">{money.format(listing.priceEur)}</span>
           <span className="text-[10px] text-muted">{listing.mileageKm !== null ? formatKm(listing.mileageKm) : "—"}</span>
         </div>
         <div className="flex justify-end">
@@ -243,9 +256,9 @@ function ListingRow({
       href={listing.url}
       target="_blank"
       rel="noopener noreferrer"
-      className="flex items-center gap-3 rounded-md border border-border bg-surface-1 p-2 hover:border-series-1/50"
+      className="flex items-center gap-3 rounded-lg border border-border bg-surface-1 p-2 transition-colors hover:border-border-strong hover:bg-surface-2"
     >
-      <div className="h-14 w-20 shrink-0 overflow-hidden rounded bg-surface-2">
+      <div className="h-14 w-20 shrink-0 overflow-hidden rounded-md bg-surface-2">
         <ListingPhoto src={listing.photoUrls[0]} placeholderClassName="text-base" />
       </div>
       <div className="min-w-0 flex-1">
@@ -259,9 +272,9 @@ function ListingRow({
         <DealBadge deal={deal} mode="pill" />
       </span>
       {listing.isNew && (
-        <span className="shrink-0 rounded bg-status-warning px-1.5 py-0.5 text-[10px] font-semibold text-black">NEW</span>
+        <span className="shrink-0 rounded-md bg-status-warning px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-black">NEW</span>
       )}
-      <div className="shrink-0 text-right tabular">
+      <div className="numeral shrink-0 text-right">
         <div className="text-sm font-semibold text-primary">{money.format(listing.priceEur)}</div>
         <div className="text-[10px] text-muted">{listing.mileageKm !== null ? formatKm(listing.mileageKm) : "—"}</div>
         <DealBadge deal={deal} mode="inline" />
@@ -272,7 +285,7 @@ function ListingRow({
           e.preventDefault();
           onToggleWatchlist(listing.id);
         }}
-        className="shrink-0 text-sm"
+        className="shrink-0 text-sm text-secondary transition-colors hover:text-primary"
       >
         {watchlisted ? "★" : "☆"}
       </button>

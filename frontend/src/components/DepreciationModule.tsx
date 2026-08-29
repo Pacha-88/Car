@@ -73,38 +73,51 @@ export function DepreciationModule({ listings }: DepreciationModuleProps) {
 
   if (buckets.length === 0) {
     return (
-      <div className="rounded-lg border border-border bg-surface-1 p-4 text-sm text-muted">
+      <div className="rounded-xl border border-border bg-surface-1 p-4 text-sm text-muted shadow-[var(--shadow-1)]">
         Not enough listings with a known registration date and mileage to build a depreciation curve.
       </div>
     );
   }
 
   return (
-    <div className="rounded-lg border border-border bg-surface-1 p-4">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-semibold text-primary">Depreciation by model year</h2>
-          <p className="text-xs text-muted">
+    <section className="rounded-xl border border-border bg-surface-1 shadow-[var(--shadow-1)]">
+      <header className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-border px-4 py-2.5">
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold leading-tight text-primary">Depreciation by model year</h2>
+          <p className="mt-0.5 text-xs text-muted">
             {input.length} listings · all prices adjusted to {referenceKm.toLocaleString("de-DE")} km · band = middle
             half of each bucket (25th–75th percentile)
           </p>
         </div>
-        <div className="flex gap-1">
+        <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-surface-2 p-0.5">
           {VARIANT_TABS.map((t) => (
             <button
               key={t.key}
               type="button"
               onClick={() => setVariantTab(t.key)}
-              className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-                variantTab === t.key ? "bg-series-1 text-white" : "text-secondary hover:text-primary"
+              aria-pressed={variantTab === t.key}
+              className={`rounded-[6px] px-2.5 py-1 text-xs font-medium transition-colors ${
+                variantTab === t.key ? "bg-accent text-accent-ink" : "text-secondary hover:bg-surface-3 hover:text-primary"
               }`}
             >
               {t.label}
             </button>
           ))}
         </div>
-        <label className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-muted">
-          Compare at
+      </header>
+
+      <div className="px-4 pb-3 pt-3">
+      <label className="mb-2 flex w-fit items-center gap-2.5">
+        <span className="eyebrow">Compare at</span>
+        {/* The rail is painted by this wrapper, not by the input: the shared
+            .range-thumb-input rule makes the input itself transparent so the
+            two-handle slider can overlay a pair of them. */}
+        <span className="relative block h-4 w-36">
+          <span className="absolute top-1/2 h-1 w-full -translate-y-1/2 rounded-full bg-baseline" />
+          <span
+            className="absolute top-1/2 h-1 -translate-y-1/2 rounded-full bg-muted"
+            style={{ left: 0, width: `${(referenceKm / 150_000) * 100}%` }}
+          />
           <input
             type="range"
             min={0}
@@ -112,11 +125,11 @@ export function DepreciationModule({ listings }: DepreciationModuleProps) {
             step={5_000}
             value={referenceKm}
             onChange={(e) => setReferenceKm(Number(e.target.value))}
-            className="range-thumb-input relative h-4 w-32"
+            className="range-thumb-input absolute inset-0 h-4 w-full"
           />
-          <span className="tabular normal-case text-secondary">{referenceKm.toLocaleString("de-DE")} km</span>
-        </label>
-      </div>
+        </span>
+        <span className="numeral text-[11px] font-medium text-secondary">{referenceKm.toLocaleString("de-DE")} km</span>
+      </label>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_240px]">
         <div>
@@ -264,14 +277,14 @@ export function DepreciationModule({ listings }: DepreciationModuleProps) {
           )}
           {transitions.length > 0 && (
             <div>
-              <div className="mb-1 text-[10px] uppercase tracking-wide text-muted">Cost of one more year</div>
+              <div className="eyebrow mb-1.5">Cost of one more year</div>
               <div className="flex flex-col gap-1">
                 {transitions.map((t) => (
-                  <div key={`${t.fromLabel}-${t.toLabel}`} className="flex items-center gap-2 text-[11px]">
+                  <div key={`${t.fromLabel}-${t.toLabel}`} className="flex items-baseline gap-2 text-[11px]">
                     <span className="w-20 shrink-0 text-secondary">
                       {shortLabel(t.fromLabel)}→{shortLabel(t.toLabel)}
                     </span>
-                    <span className="tabular text-primary">{money.formatSigned(t.deltaEur)}</span>
+                    <span className="numeral ml-auto text-right text-primary">{money.formatSigned(t.deltaEur)}</span>
                   </div>
                 ))}
               </div>
@@ -280,23 +293,24 @@ export function DepreciationModule({ listings }: DepreciationModuleProps) {
         </div>
       </div>
 
-      <p className="mt-3 border-t border-border pt-2 text-[10px] leading-relaxed text-muted">
+      <p className="mt-3 border-t border-border pt-2.5 text-[10px] leading-relaxed text-muted">
         Prices are adjusted to the compare-at mileage using one linear price-per-km rate fit across the current selection, so
         they move with the slider above and are not what any specific car actually sold for. This compares different
         cars on one day rather than tracking one over time, and these are asking prices, not sale prices. There is no
         "new list price" reference here (no source in this project provides Tesla's new-car pricing) — percentages are
         relative to the youngest non-thin bucket, not MSRP.
       </p>
-    </div>
+      </div>
+    </section>
   );
 }
 
 function InsightCard({ label, headline, detail }: { label: string; headline: string; detail: string }) {
   return (
-    <div className="rounded-md bg-surface-2 p-2.5">
-      <div className="text-[10px] uppercase tracking-wide text-muted">{label}</div>
-      <div className="text-sm font-medium text-primary">{headline}</div>
-      <div className="text-xs tabular text-secondary">{detail}</div>
+    <div className="rounded-lg border border-border bg-surface-2 px-2.5 py-2">
+      <div className="eyebrow mb-1">{label}</div>
+      <div className="text-sm font-medium leading-snug text-primary">{headline}</div>
+      <div className="numeral mt-0.5 text-xs text-secondary">{detail}</div>
     </div>
   );
 }
