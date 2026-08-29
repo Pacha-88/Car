@@ -406,3 +406,24 @@ def test_a_page_that_yields_almost_nothing_says_so(capsys, monkeypatch):
     _CountingSource(page).fetch_listings(model="model_y", country="HU")
 
     assert "most of this page could NOT be read" in capsys.readouterr().out
+
+
+# --- an ad has to be the model the page claimed ---------------------------
+# Model 3's URL slug was inferred from Model Y's by naming convention and
+# never confirmed against the site. A wrong slug that quietly redirected
+# would have filed a page of Model Y ads as Model 3, and nothing in the row
+# would have said otherwise - so the ad's own URL is now the witness.
+
+
+def test_an_ad_from_another_model_s_page_is_not_kept():
+    rows = _split_listings(BROWSER_DOM_HTML)  # a real Model Y results page
+    assert all(parse_item(r, model="model_y") is not None for r in rows)
+    assert all(parse_item(r, model="model_3") is None for r in rows)
+
+
+def test_a_page_of_the_wrong_model_says_so_instead_of_blaming_the_markup(monkeypatch):
+    monkeypatch.setattr(hasznaltauto_module.time, "sleep", lambda _s: None)
+    source = _CountingSource(BROWSER_DOM_HTML)  # Model Y ads, asked for as Model 3
+
+    with pytest.raises(RuntimeError, match="serving model_y ads, not model_3"):
+        source.fetch_listings(model="model_3", country="HU")

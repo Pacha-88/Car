@@ -230,10 +230,21 @@ class HasznaltautoSource(Source):
 def _unreadable_page_error(html: str, chunks: list[str], *, page: int, model: str) -> Exception:
     """Which of the three required fields stopped matching, and where to look."""
     sample = chunks[0]
+    href = _href_of(sample) or ""
+    wrong_model = href and f"/{MODEL_SLUGS[model]}/" not in href
+    if wrong_model:
+        # Not a markup change at all: this URL is serving another model's
+        # ads. Storing them would file, say, Model Y cars as Model 3.
+        served = re.search(r"/szemelyauto/tesla/([^/]+)/", href)
+        return RuntimeError(
+            f"page {page} is serving {served.group(1) if served else 'another model'}"
+            f" ads, not {MODEL_SLUGS[model]} - the URL for this model is wrong."
+            f" First ad on it: {href}"
+        )
     missing = [
         name
         for name, found in (
-            ("listing id (url tail or data-hirkod)", _listing_id(sample, _href_of(sample)) is not None),
+            ("listing id (url tail or data-hirkod)", _listing_id(sample, href) is not None),
             ("title/url (<h3><a href=...>)", _TITLE_URL_RE.search(sample) is not None),
             ("price", extract_price_huf(sample) is not None),
         )
@@ -303,6 +314,14 @@ def parse_item(chunk: str, *, model: str) -> RawListing | None:
     price = extract_price_huf(chunk)
     listing_id = _listing_id(chunk, title_url.group(1) if title_url else None)
     if not listing_id or not title_url or price is None:
+        return None
+    # The ad's own URL says which model it is
+    # (/szemelyauto/tesla/model_y/tesla_model_y_rwd_...-23417259). Model 3's
+    # slug was inferred from Model Y's by naming convention and never
+    # confirmed against the site, so a wrong slug that quietly redirected
+    # would have filed a page of Model Y ads as Model 3 - and no field in
+    # the row itself would have contradicted it. This one does.
+    if f"/{MODEL_SLUGS[model]}/" not in title_url.group(1):
         return None
 
     reg_match = _REG_DATE_RE.search(chunk)
