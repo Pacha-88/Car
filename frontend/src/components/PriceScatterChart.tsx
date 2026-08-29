@@ -1,4 +1,4 @@
-import { memo, useMemo, useRef, useState, type MouseEvent } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import {
   CartesianGrid,
   Customized,
@@ -83,6 +83,22 @@ export function PriceScatterChart({
   // One stable map for the marks' pixel positions; DotsLayer rewrites it in
   // full on every chart render, so it always matches what is on screen.
   const [positions] = useState(() => new Map<string, { cx: number; cy: number; point: ScatterPoint }>());
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    // Debug handle for the Playwright checks - dev server only. positions
+    // and wrapRef are stable for the component's life, so once is enough.
+    (window as unknown as Record<string, unknown>).__scatterDebug = {
+      size: () => positions.size,
+      maxCx: () => Math.max(0, ...[...positions.values()].map((m) => m.cx)),
+      rectLeft: () => wrapRef.current?.querySelector("svg.recharts-surface")?.getBoundingClientRect().left,
+      nearest: (x: number, y: number) => {
+        let bd = Infinity;
+        for (const m of positions.values()) bd = Math.min(bd, Math.hypot(m.cx - x, m.cy - y));
+        return bd;
+      },
+    };
+  }, [positions]);
 
   const nearestMark = (e: MouseEvent) => {
     const svg = wrapRef.current?.querySelector("svg.recharts-surface");
@@ -181,6 +197,13 @@ export function PriceScatterChart({
         )}
         {active && (
           <div
+            // Pass-through on purpose: an interactive card parks a 256px
+            // rectangle over the plot and blocks re-hovering every dot under
+            // it (measured: 2 of 10 probe points). Hover keeps working
+            // through the card - whatever dot is nearest when you click is
+            // the ad that opens, and the visible card names exactly that
+            // dot. The one real control, the watchlist star, is its own
+            // pointer-events island below.
             className="pointer-events-none absolute z-10"
             style={{
               // Offset from the mark, flipping near the right/bottom edges so
@@ -328,8 +351,9 @@ function DotsLayer({
     else bucket.set(point.color, [d]);
     if (watchlist.has(point.listing.id)) watchRings.push({ cx, cy });
   }
+  const maxCx = Math.max(0, ...[...positions.values()].map((m) => m.cx));
   return (
-    <g>
+    <g data-dots={positions.size} data-max-cx={Math.round(maxCx)}>
       {[...solid.entries()].map(([color, ds]) => (
         <path key={color} d={ds.join(" ")} fill={color} stroke="var(--surface-1)" strokeWidth={2} />
       ))}
@@ -413,7 +437,11 @@ function HoverCard({ point, watchlist, onToggleWatchlist, dealScores }: HoverCar
               e.stopPropagation();
               onToggleWatchlist(listing.id);
             }}
-            className="shrink-0 text-sm"
+            // The one interactive island on a pass-through card. Its own
+            // mousemove stops too, or sliding onto the star would re-target
+            // the nearest dot underneath and yank the card away mid-click.
+            onMouseMove={(e) => e.stopPropagation()}
+            className="pointer-events-auto shrink-0 text-sm"
             title={isWatchlisted ? "Remove from watchlist" : "Add to watchlist"}
           >
             {isWatchlisted ? "★" : "☆"}

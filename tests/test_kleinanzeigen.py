@@ -118,3 +118,66 @@ def test_a_failure_on_the_very_first_page_still_raises():
     source = _FlakyPageSource(good_pages=0, article_html=FIXTURE_HTML)
     with pytest.raises(RuntimeError):
         source.fetch_listings(model="model_y", country="DE")
+
+
+# --- telling a throttle apart from the end of the results ------------------
+# Both arrive as HTTP 200 with no ads on the page. The difference is the
+# site's own sliding pagination window ("seite:N" links): a page those links
+# promised that then comes back empty is the anti-abuse layer dropping ads,
+# not the list ending. Captured live (2026-08-29): page 1 advertises
+# seite:2..8 while a genuine last page advertises nothing beyond itself.
+
+PAGINATION = '<div class="pagination">%s</div>'
+
+
+def _page(articles_html: str, advertised: list[int]) -> str:
+    links = "".join(f'<a href="/s-autos/seite:{n}/tesla-model-y/k0c216" class="pagination-page">{n}</a>' for n in advertised)
+    return (PAGINATION % links) + articles_html
+
+
+class _ScriptedSource(KleinanzeigenSource):
+    def __init__(self, pages: dict[int, str]):
+        self._pages = pages
+        self.fetched: list[int] = []
+
+    def fetch_raw_page(self, *, model: str, page: int = 1) -> str:
+        self.fetched.append(page)
+        return self._pages[page]
+
+
+def test_an_empty_page_the_site_itself_advertised_is_a_throttle(monkeypatch):
+    monkeypatch.setattr("car_tracker.sources.kleinanzeigen.time.sleep", lambda _s: None)
+    source = _ScriptedSource({
+        1: _page(FIXTURE_HTML, advertised=[2, 3, 4]),
+        2: _page("", advertised=[3, 4]),  # promised by page 1, served empty
+    })
+    with pytest.raises(PartialResults) as caught:
+        source.fetch_listings(model="model_y", country="DE")
+    assert caught.value.listings, "page 1's ads are kept"
+    assert "throttled" in caught.value.reason
+
+
+def test_an_empty_page_nobody_advertised_is_the_end_of_the_results(monkeypatch):
+    monkeypatch.setattr("car_tracker.sources.kleinanzeigen.time.sleep", lambda _s: None)
+    source = _ScriptedSource({
+        1: _page(FIXTURE_HTML, advertised=[2]),
+        2: _page(FIXTURE_HTML, advertised=[]),  # a real last page: no further links
+        3: _page("", advertised=[]),
+    })
+    listings = source.fetch_listings(model="model_y", country="DE")
+    assert listings, "a clean full read returns normally"
+    assert source.fetched == [1, 2, 3]
+
+
+def test_a_beyond_the_end_page_cannot_vouch_for_itself(monkeypatch):
+    """A page past the real end can echo its own "seite:9" in its canonical
+    URL. Only what EARLIER pages promised counts, or that echo would turn
+    every clean end-of-list into a phantom throttle."""
+    monkeypatch.setattr("car_tracker.sources.kleinanzeigen.time.sleep", lambda _s: None)
+    source = _ScriptedSource({
+        1: _page(FIXTURE_HTML, advertised=[]),
+        2: '<link rel="canonical" href="/s-autos/seite:2/tesla-model-y/k0c216">',  # empty + self-echo
+    })
+    listings = source.fetch_listings(model="model_y", country="DE")
+    assert listings, "ends cleanly - the echo is not evidence"
+    assert source.fetched == [1, 2]

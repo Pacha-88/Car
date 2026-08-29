@@ -50,6 +50,7 @@ _PRICE_BLOCK_RE = re.compile(r'price-shipping--price">\s*([^<]+?)\s*<')
 _TAG_RE = re.compile(r'<span class="simpletag">\s*([^<]+?)\s*</span>')
 _LOCATION_RE = re.compile(r'icon-pin-gray"[^>]*></i>\s*([^<\n]+)')
 _IMAGE_RE = re.compile(r'"contentUrl":"([^"]+)"')
+_PAGE_LINK_RE = re.compile(r"seite:(\d+)")
 
 _PRICE_NUMBER_RE = re.compile(r"([\d.]+)\s*€")
 _MILEAGE_TAG_RE = re.compile(r"^([\d.]+)\s*km$")
@@ -80,6 +81,12 @@ class KleinanzeigenSource(Source):
 
         listings: list[RawListing] = []
         page = 1
+        # The highest page the site's own pagination links have promised so
+        # far ("seite:N" hrefs, a sliding window that always includes the
+        # next few pages). This is what finally tells a throttle apart from
+        # the end of the results: both arrive as HTTP 200 with no ads on
+        # the page, but only the throttle contradicts the site's own links.
+        highest_advertised = 1
         while max_pages is None or page <= max_pages:
             try:
                 html = self.fetch_raw_page(model=model, page=page)
@@ -90,17 +97,25 @@ class KleinanzeigenSource(Source):
                     raise
                 raise PartialResults(listings, f"page {page} failed ({type(exc).__name__}: {exc})") from exc
             articles = _ARTICLE_RE.findall(html)
+            # Note the order: the empty-check consults only what EARLIER
+            # pages promised. A beyond-the-end page can echo its own
+            # "seite:N" in its canonical URL, and must not get to use that
+            # echo as evidence that it was supposed to exist.
             if not articles:
-                # Could be the end of the results, or a throttle page that
-                # simply has no ads on it - HTTP 200 either way, and nothing
-                # in the response tells them apart. Calling it partial would
-                # be wrong on every healthy run (the last page is always
-                # empty, that is how the loop ends) and would mean this
-                # source could never retire anything. So stop here, and let
-                # the retirement cap in cli.py catch the case where this was
-                # a throttle: a run that suddenly "sees" a fraction of the
-                # ads is refused there, whatever the cause.
+                if page <= highest_advertised:
+                    # The site linked to this very page and then served it
+                    # empty - that is its anti-abuse layer quietly dropping
+                    # the ads, not the list ending. Say so, so retirement
+                    # knows the unfetched tail is unseen rather than sold.
+                    raise PartialResults(
+                        listings,
+                        f"page {page} returned no ads although the site's own pagination links say it exists"
+                        " (throttled)",
+                    )
                 break
+            advertised = [int(n) for n in _PAGE_LINK_RE.findall(html)]
+            if advertised:
+                highest_advertised = max(highest_advertised, *advertised)
             listings.extend(parsed for a in articles if (parsed := parse_item(a, model=model)) is not None)
             page += 1
             if max_pages is None or page <= max_pages:

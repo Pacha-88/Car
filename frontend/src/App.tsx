@@ -13,7 +13,7 @@ import { computeDealScores } from "./lib/dealScore";
 import { ageBucketIndex, ageInYears, computeDepreciationCurve } from "./lib/depreciation";
 import { applyFilters, defaultFilterState, type FilterState } from "./lib/filters";
 import { linearSlope } from "./lib/trend";
-import type { Model } from "./types";
+import type { Listing, Model } from "./types";
 
 const DEAL_TIERS_KEPT = new Set(["great", "good"]);
 
@@ -81,10 +81,15 @@ function Dashboard({ data }: { data: ReturnType<typeof useListings> }) {
   const dealScores = useMemo(() => computeDealScores(modelListings), [modelListings]);
 
   // (Re)seed filter bounds whenever the model switches or data first loads.
-  useEffect(() => {
-    if (listings.length === 0) return;
+  // Adjusted during render (React's derived-state pattern), not in an
+  // effect: the effect version painted a full frame with the stale filters
+  // and then re-rendered everything - at live scale (3.200+ listings) that
+  // doubled the cost of every model switch.
+  const [seededFor, setSeededFor] = useState<{ listings: Listing[]; model: Model } | null>(null);
+  if (listings.length > 0 && (seededFor?.listings !== listings || seededFor.model !== model)) {
+    setSeededFor({ listings, model });
     setFilters(defaultFilterState(listings, model));
-  }, [listings, model]);
+  }
 
   const preExclusion = useMemo(() => {
     if (!filters) return [];
