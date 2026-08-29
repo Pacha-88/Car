@@ -77,9 +77,22 @@ _TITLE_URL_RE = re.compile(r'<h3[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>\s*
 _REG_DATE_RE = re.compile(r'<span class="info[^"]*">\s*(\d{4})/(\d{1,2}),\s*</span>')
 _POWER_RE = re.compile(r'<span class="info[^"]*">\s*(\d+)\s*kW,\s*</span>')
 _MILEAGE_RE = re.compile(r"<abbr[^>]*>([\d\s\u00a0]+)\s*km</abbr>")
-# The price appears twice per row (a mobile block and a desktop one) in
-# either the plain or the -highlighted class; any attribute may follow.
-_PRICE_RE = re.compile(r'pricefield-primary(?:-highlighted)?"[^>]*>\s*([\d\s\u00a0]+)\s*Ft\s*<')
+# Three ways to find the asking price, tried in order. A single pattern
+# pinned to `pricefield-primary">` is what failed on the live page: the
+# markup still had rows, ids and titles exactly as sampled, and only the
+# price would not match - so one more class on that div, or one tag wrapped
+# around the number, was enough to lose all 25 cars on every page.
+#
+# 1. the primary price field, whatever else its class list or attributes say
+# 2. any pricefield that is not the struck-through old price
+# 3. no class at all: the first "<number> Ft" big enough to be a car
+_PRICE_PRIMARY_RE = re.compile(r"pricefield-primary(?:-highlighted)?\b[^>]*>(.{0,160}?)Ft", re.S | re.I)
+_PRICE_ANY_FIELD_RE = re.compile(r'class="[^"]*\bpricefield-(?!inactive)[\w-]*"[^>]*>(.{0,160}?)Ft', re.S | re.I)
+_PRICE_BARE_RE = re.compile(r"([\d][\d\s\u00a0.]{5,})\s*Ft", re.I)
+# A used Tesla in Hungary is millions of forints. The floor keeps layer 3
+# off a monthly finance instalment or a documentation fee, which are the
+# other numbers on a row that end in "Ft".
+_MIN_PLAUSIBLE_HUF = 1_000_000
 _DESCRIPTION_RE = re.compile(r'talalati-sor__leiras"[^>]*>(.*?)</div>', re.S)
 _SELLER_RE = re.compile(r'trader-name">\s*([^<]+?)\s*</span>')
 _IMAGE_RE = re.compile(r'<img class="img-responsive" src="([^"]+)"')
@@ -201,7 +214,7 @@ def _unreadable_page_error(html: str, chunks: list[str], *, page: int, model: st
         for name, found in (
             ("listing id (url tail or data-hirkod)", _listing_id(sample, _href_of(sample)) is not None),
             ("title/url (<h3><a href=...>)", _TITLE_URL_RE.search(sample) is not None),
-            ("price (pricefield-primary)", _PRICE_RE.search(sample) is not None),
+            ("price", extract_price_huf(sample) is not None),
         )
         if not found
     ]
@@ -210,12 +223,18 @@ def _unreadable_page_error(html: str, chunks: list[str], *, page: int, model: st
     # The excerpt matters more than the file: whoever runs this reads a
     # terminal, and pasting three lines back is a great deal easier than
     # finding and sending a 150 KB page.
-    excerpt = re.sub(r"\s+", " ", sample[:400])
+    # The first 400 characters of a row are the same boilerplate every time
+    # and say nothing about what broke; show the neighbourhood of whichever
+    # field actually failed instead.
+    if "price" in missing:
+        excerpt = f"price area of the first row: {_price_neighbourhood(sample)}"
+    else:
+        opening = re.sub(r"\s+", " ", sample[:400])
+        excerpt = f"first row starts: {opening}"
     return RuntimeError(
         f"page {page} has {len(chunks)} listing rows but none could be read - "
         f"missing: {', '.join(missing) or 'nothing obvious, the row split may be wrong'}."
-        f" The site's markup has moved.{where}\n"
-        f"    first row starts: {excerpt}"
+        f" The site's markup has moved.{where}\n    {excerpt}"
     )
 
 
@@ -249,13 +268,9 @@ def _split_listings(html: str) -> list[str]:
 
 def parse_item(chunk: str, *, model: str) -> RawListing | None:
     title_url = _TITLE_URL_RE.search(chunk)
-    price_match = _PRICE_RE.search(chunk)
+    price = extract_price_huf(chunk)
     listing_id = _listing_id(chunk, title_url.group(1) if title_url else None)
-    if not listing_id or not title_url or not price_match:
-        return None
-
-    price = _parse_number(price_match.group(1))
-    if price is None:
+    if not listing_id or not title_url or price is None:
         return None
 
     reg_match = _REG_DATE_RE.search(chunk)
@@ -288,8 +303,35 @@ def parse_item(chunk: str, *, model: str) -> RawListing | None:
     )
 
 
+def extract_price_huf(chunk: str) -> int | None:
+    """The asking price in forints, or None if nothing in the row looks like one."""
+    for pattern in (_PRICE_PRIMARY_RE, _PRICE_ANY_FIELD_RE):
+        for match in pattern.finditer(chunk):
+            price = _parse_number(_strip_tags(match.group(1)))
+            if price:
+                return price
+    for match in _PRICE_BARE_RE.finditer(chunk):
+        price = _parse_number(match.group(1))
+        if price and price >= _MIN_PLAUSIBLE_HUF:
+            return price
+    return None
+
+
+def _strip_tags(html: str) -> str:
+    return re.sub(r"<[^>]+>", "", html)
+
+
+def _price_neighbourhood(chunk: str) -> str:
+    """What the row says around its "Ft"s - for when none of the three worked."""
+    seen = [re.sub(r"\s+", " ", chunk[max(0, m.start() - 90) : m.end() + 10]) for m in _PRICE_BARE_RE.finditer(chunk)]
+    if not seen:
+        seen = [re.sub(r"\s+", " ", chunk[max(0, m.start() - 40) : m.start() + 90]) for m in re.finditer(r"Ft", chunk)]
+    return " || ".join(seen[:3]) if seen else "no \"Ft\" anywhere in the row"
+
+
 def _parse_number(text: str) -> int | None:
-    digits = re.sub(r"\s+", "", text)
+    """"10 390 000" -> 10390000. Dots group thousands in Hungarian too."""
+    digits = re.sub(r"[\s\u00a0.]+", "", text)
     return int(digits) if digits.isdigit() else None
 
 

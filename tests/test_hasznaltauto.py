@@ -1,3 +1,4 @@
+import re
 from datetime import date
 from pathlib import Path
 
@@ -5,7 +6,12 @@ import pytest
 
 from car_tracker.sources import hasznaltauto as hasznaltauto_module
 from car_tracker.sources.base import PartialResults
-from car_tracker.sources.hasznaltauto import HasznaltautoSource, _split_listings, parse_item
+from car_tracker.sources.hasznaltauto import (
+    HasznaltautoSource,
+    _split_listings,
+    extract_price_huf,
+    parse_item,
+)
 
 FIXTURE_HTML = (Path(__file__).parent / "fixtures" / "hasznaltauto_search_sample.html").read_text(encoding="utf-8")
 
@@ -128,6 +134,11 @@ def test_a_failure_on_the_very_first_page_still_raises(monkeypatch):
         source.fetch_listings(model="model_y", country="HU")
 
 
+def _without_prices(html: str) -> str:
+    """Every "10 390 000 Ft" replaced by words - no number left to find."""
+    return re.sub(r"[\d][\d\s\u00a0.]{4,}\s*Ft", "ár egyeztetés alatt Ft", html)
+
+
 # --- pagination: stop where the page says the results stop ----------------
 
 
@@ -214,7 +225,9 @@ def test_unreadable_rows_raise_instead_of_returning_nothing(monkeypatch):
     owner hunting Cloudflare. Now it names the field that gave out.
     """
     monkeypatch.setattr(hasznaltauto_module.time, "sleep", lambda _s: None)
-    broken = FIXTURE_HTML.replace("pricefield-primary", "pricefield-renamed")
+    # Renaming the class is not enough any more - the price falls back to a
+    # class-free scan - so take the number away entirely.
+    broken = _without_prices(FIXTURE_HTML)
     source = _CountingSource(broken)
 
     with pytest.raises(RuntimeError, match="listing rows but none could be read"):
@@ -225,7 +238,7 @@ def test_unreadable_rows_raise_instead_of_returning_nothing(monkeypatch):
 
 def test_unreadable_rows_after_good_pages_keep_those_pages(monkeypatch):
     monkeypatch.setattr(hasznaltauto_module.time, "sleep", lambda _s: None)
-    broken = FIXTURE_HTML.replace("pricefield-primary", "pricefield-renamed")
+    broken = _without_prices(FIXTURE_HTML)
 
     class _GoodThenBroken(_CountingSource):
         def fetch_raw_page(self, *, model: str, page: int = 1) -> str:
@@ -271,3 +284,64 @@ def test_reordered_row_classes_still_parse():
     rows = _split_listings(shuffled)
     assert len(rows) == 3
     assert all(parse_item(r, model="model_y") is not None for r in rows)
+
+
+# --- the price is the field that actually broke on the live site ----------
+# The rows, ids and titles came through exactly as sampled; only
+# `pricefield-primary">` would not match, and one pattern pinned to that
+# exact string lost all 25 cars on every page. Three layers now: the
+# primary field whatever else its class list says, any pricefield that is
+# not the struck-through old price, and failing both, the first number in
+# the row big enough to be a car.
+
+
+@pytest.mark.parametrize(
+    "markup, expected",
+    [
+        ('<div class="pricefield-primary-highlighted">10 390 000 Ft</div>', 10_390_000),
+        ('<div class="pricefield-primary text-right">10 390 000 Ft</div>', 10_390_000),
+        ('<div class="pricefield-primary" data-x="1">10 390 000 Ft</div>', 10_390_000),
+        ('<div class="pricefield-primary"><span>10 390 000</span> Ft</div>', 10_390_000),
+        ('<div class="pricefield-primary">10.390.000 Ft</div>', 10_390_000),
+        ('<div class="pricefield-primary">10\u00a0390\u00a0000\u00a0Ft</div>', 10_390_000),
+        ('<div class="ad-price-main">10 390 000 Ft</div>', 10_390_000),
+    ],
+)
+def test_price_survives_the_shapes_a_class_change_can_take(markup, expected):
+    assert extract_price_huf(markup) == expected
+
+
+def test_the_struck_through_old_price_never_wins():
+    row = '<div class="pricefield-inactive">10 500 000 Ft</div><div class="pricefield-primary">10 390 000 Ft</div>'
+    assert extract_price_huf(row) == 10_390_000
+
+
+def test_a_monthly_instalment_is_not_mistaken_for_a_price():
+    """Layer three has no class to go on, so it needs a floor.
+
+    A used Tesla in Hungary is millions of forints; a finance instalment or
+    a paperwork fee is not, and both end in "Ft" on the same row.
+    """
+    assert extract_price_huf('<div class="finance">havi 89 000 Ft</div>') is None
+    row = '<div class="finance">havi 89 000 Ft</div><div class="whatever">10 390 000 Ft</div>'
+    assert extract_price_huf(row) == 10_390_000
+
+
+def test_an_unreadable_price_says_what_the_row_says_around_its_Ft(monkeypatch):
+    """The old message quoted the first 400 characters of the row - which
+    are identical boilerplate on every listing and said nothing at all."""
+    monkeypatch.setattr(hasznaltauto_module.time, "sleep", lambda _s: None)
+    # Strip every price from the rows, leaving something Ft-shaped behind.
+    broken = _without_prices(FIXTURE_HTML)
+
+    class _Broken(_CountingSource):
+        def fetch_raw_page(self, *, model: str, page: int = 1) -> str:
+            self.attempted.append(page)
+            return broken
+
+    with pytest.raises(RuntimeError) as caught:
+        _Broken(broken).fetch_listings(model="model_y", country="HU")
+    message = str(caught.value)
+    assert "missing: price" in message
+    assert "price area of the first row" in message
+    assert "pricefield" in message, "the quoted neighbourhood must show the real markup"

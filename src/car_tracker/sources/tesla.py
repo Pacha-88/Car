@@ -136,7 +136,7 @@ class TeslaSource(Source):
                         # single AT item whose EmissionsData was a string
                         # took down all of tesla/model_y/AT - 0 listings
                         # kept from a market that had answered fine.
-                        unparsable = (unparsable[0] + 1, f"{type(exc).__name__}: {exc}")
+                        unparsable = (unparsable[0] + 1, f"{type(exc).__name__}: {exc}; item was {repr(item)[:160]}")
                         continue
                     if not raw.photo_urls and photoless_sample is None:
                         photoless_sample = item
@@ -180,6 +180,17 @@ class TeslaSource(Source):
                 f"    tesla/{model}/{country}: skipped {unparsable[0]} item(s) this parser could not"
                 f" read ({unparsable[1]}) - kept the other {len(listings)}"
             )
+            if not listings:
+                # Cars came back and not one of them could be read. That is
+                # a broken parser, not an empty market - and reporting it as
+                # a clean "ok, 0 listings" is what let a real run retire 16
+                # Teslas as sold on the strength of a market it had in fact
+                # failed to read. An error here keeps retirement off until
+                # it is fixed.
+                raise RuntimeError(
+                    f"the API returned {unparsable[0]} car(s) for {model}/{country} and none could be"
+                    f" read - {unparsable[1]}"
+                )
         self._report_photoless(listings, photoless_sample, model=model, country=country)
         return listings
 
@@ -223,12 +234,54 @@ class TeslaSource(Source):
                 time.sleep(REQUEST_DELAY_SECONDS)
             first = False
             data = self.fetch_raw_page(model=model, country=country, offset=offset)
-            results = data.get("results", [])
-            total = data.get("total_matches_found", len(results))
+            results = _results_of(data, model=model, country=country)
+            total = data.get("total_matches_found") or len(results)
             yield offset, results, total
             offset += PAGE_SIZE
             if offset >= total or not results:
                 break
+
+
+def _results_of(data: dict, *, model: str, country: str) -> list[dict]:
+    """The cars in a response, whichever shape `results` came back in.
+
+    A thin market does not answer with a list. Tesla pads it into an object
+    - {"results": {"exact": [...], "approximate": [...]}} - and iterating
+    that yields its KEYS: three strings where three cars were expected,
+    which is exactly what tesla/model_y/AT reported ("skipped 3 item(s):
+    'str' object has no attribute 'get' - kept the other 0").
+
+    Only the "exact" bucket is taken. "approximate" is Tesla widening the
+    search past the market that was asked for, and those cars would be
+    stored under the wrong country - a Munich car filed under Austria is
+    worse than no Austrian car at all.
+    """
+    results = data.get("results")
+    if isinstance(results, list):
+        cars = [r for r in results if isinstance(r, dict)]
+        if len(cars) != len(results):
+            _report_odd_results(results, model=model, country=country)
+        return cars
+    if isinstance(results, dict):
+        exact = results.get("exact")
+        cars = [r for r in exact if isinstance(r, dict)] if isinstance(exact, list) else []
+        if not cars:
+            # Say what was actually in there rather than reporting an empty
+            # market: this is the shape that already cost one whole market.
+            print(
+                f"    tesla/{model}/{country}: the API answered with an object instead of a list of"
+                f" cars, and its \"exact\" bucket held nothing usable - keys present:"
+                f" {sorted(results)}"
+            )
+        return cars
+    if results is not None:
+        _report_odd_results(results, model=model, country=country)
+    return []
+
+
+def _report_odd_results(results: object, *, model: str, country: str) -> None:
+    sample = repr(results)[:200]
+    print(f"    tesla/{model}/{country}: unexpected shape for `results` ({type(results).__name__}): {sample}")
 
 
 def _build_query(model: str, country: str, *, offset: int = 0) -> dict:

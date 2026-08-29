@@ -316,6 +316,7 @@ def test_one_unreadable_car_does_not_cost_the_whole_market(monkeypatch, capsys):
     """A single bad item used to take every car in the market with it."""
     monkeypatch.setattr(tesla_module.time, "sleep", lambda _s: None)
     good = {"VIN": "A", "Price": 40000, "Year": 2024, "Odometer": 1000}
+    rotten = {"VIN": "R", "Price": "ask us", "Year": 2024}
     other = {"VIN": "B", "Price": 41000, "Year": 2024, "Odometer": 2000}
 
     class _OneRotten(TeslaSource):
@@ -323,11 +324,51 @@ def test_one_unreadable_car_does_not_cost_the_whole_market(monkeypatch, capsys):
             pass
 
         def fetch_raw_page(self, *, model, country, offset=0):
-            return {"results": [good, "a bare string where a car should be", other], "total_matches_found": 3}
+            return {"results": [good, rotten, other], "total_matches_found": 3}
 
     listings = _OneRotten().fetch_listings(model="model_y", country="AT")
     assert [raw.source_listing_id for raw in listings] == ["A", "B"]
-    assert "skipped 1 item" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "skipped 1 item" in out
+    assert "'R'" in out, "the message must show what it could not read"
+
+
+def test_a_thin_market_answering_with_an_object_still_yields_its_cars(monkeypatch, capsys):
+    """Tesla pads a thin market into {"exact": [...], "approximate": [...]}.
+
+    Iterating that yields its keys - three strings where three cars were
+    expected, which is what tesla/model_y/AT reported as "skipped 3 item(s):
+    'str' object has no attribute 'get' - kept the other 0".
+    """
+    monkeypatch.setattr(tesla_module.time, "sleep", lambda _s: None)
+    car = {"VIN": "A", "Price": 40000, "Year": 2024, "Odometer": 1000}
+    munich = {"VIN": "DE1", "Price": 39000, "Year": 2024, "Odometer": 900}
+
+    class _Padded(TeslaSource):
+        def __init__(self):
+            pass
+
+        def fetch_raw_page(self, *, model, country, offset=0):
+            return {"results": {"exact": [car], "approximate": [munich] * 9}, "total_matches_found": 1}
+
+    listings = _Padded().fetch_listings(model="model_y", country="AT")
+    # "approximate" is Tesla widening past the market that was asked for;
+    # a Munich car filed under Austria is worse than no Austrian car.
+    assert [raw.source_listing_id for raw in listings] == ["A"]
+
+
+def test_an_object_with_nothing_usable_says_which_keys_were_there(monkeypatch, capsys):
+    monkeypatch.setattr(tesla_module.time, "sleep", lambda _s: None)
+
+    class _Odd(TeslaSource):
+        def __init__(self):
+            pass
+
+        def fetch_raw_page(self, *, model, country, offset=0):
+            return {"results": {"approximate": [], "total": 0}, "total_matches_found": 0}
+
+    assert _Odd().fetch_listings(model="model_y", country="AT") == []
+    assert "keys present: ['approximate', 'total']" in capsys.readouterr().out
 
 
 def test_a_market_tesla_does_not_serve_is_an_empty_market_not_a_failure(monkeypatch, capsys):
@@ -363,3 +404,24 @@ def test_a_real_block_is_still_a_failure(monkeypatch):
 
     with pytest.raises(tesla_module.FetchError):
         _Blocked().fetch_listings(model="model_y", country="DE")
+
+
+def test_a_market_where_nothing_parses_is_not_a_clean_empty_market(monkeypatch):
+    """"ok, 0 listings" from a market full of cars authorises retirement.
+
+    A real run reported tesla/model_y/AT as ok after failing to read every
+    car in it, and the retirement that followed marked 16 Teslas sold. A
+    market that answered with cars and yielded none is a broken parser.
+    """
+    monkeypatch.setattr(tesla_module.time, "sleep", lambda _s: None)
+
+    class _AllRotten(TeslaSource):
+        def __init__(self):
+            pass
+
+        def fetch_raw_page(self, *, model, country, offset=0):
+            rotten = {"VIN": "R", "Price": "ask us", "Year": 2024}
+            return {"results": [rotten, rotten, rotten], "total_matches_found": 3}
+
+    with pytest.raises(RuntimeError, match="none could be read"):
+        _AllRotten().fetch_listings(model="model_y", country="AT")
