@@ -19,6 +19,7 @@ from car_tracker.fx.ecb import fetch_latest_rates
 from car_tracker.normalize.chassis import detect_chassis
 from car_tracker.normalize.currency import EUR, market_currency, to_eur
 from car_tracker.normalize.registration import plausible_registration
+from car_tracker.normalize.title import ensure_title
 from car_tracker.normalize.variant import normalize_variant
 from car_tracker.sources.autoscout24 import COUNTRY_CODES as AUTOSCOUT24_COUNTRIES
 from car_tracker.sources.autoscout24 import AutoScout24Source
@@ -508,6 +509,9 @@ def _upsert(session, raw: RawListing, *, rates_to_eur: dict[str, float], observe
         raw.model, first_registration=first_registration, model_year=model_year, title=raw.title_raw
     )
     variant = normalize_variant(raw.variant)
+    # Belt and braces across all four sources: whatever the parsers manage,
+    # a card must never render as "Untitled".
+    fallback_title = ensure_title(None, model=raw.model)
 
     if listing is None:
         listing = Listing(
@@ -521,7 +525,7 @@ def _upsert(session, raw: RawListing, *, rates_to_eur: dict[str, float], observe
             model_year=model_year,
             first_registration=first_registration,
             url=raw.url,
-            title_raw=raw.title_raw,
+            title_raw=raw.title_raw or fallback_title,
             photo_urls=raw.photo_urls,
             seller_type=raw.seller_type,
             location=raw.location,
@@ -550,7 +554,7 @@ def _upsert(session, raw: RawListing, *, rates_to_eur: dict[str, float], observe
         listing.variant = variant or listing.variant
         listing.power_kw = raw.power_kw or listing.power_kw
         listing.color = raw.color or listing.color
-        listing.title_raw = raw.title_raw or listing.title_raw
+        listing.title_raw = raw.title_raw or listing.title_raw or fallback_title
         listing.photo_urls = raw.photo_urls or listing.photo_urls
         listing.location = raw.location or listing.location
         listing.url = raw.url or listing.url

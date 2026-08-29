@@ -59,6 +59,19 @@ export const VARIANT_LABELS: Record<string, string> = {
   other: "Other",
 };
 
+export const MODEL_LABELS: Record<string, string> = {
+  model_3: "Tesla Model 3",
+  model_y: "Tesla Model Y",
+};
+
+/** What to show when an ad carries no words of its own. The backend already
+ * guarantees a title, so this only catches rows stored before it did - but a
+ * card reading "Untitled" is exactly what that guarantee exists to prevent,
+ * and those rows are only repaired when the site serves them again. */
+export function listingTitle(listing: { titleRaw: string | null; model: string }): string {
+  return listing.titleRaw?.trim() || MODEL_LABELS[listing.model] || "Tesla";
+}
+
 export const CHASSIS_LABELS: Record<string, string> = {
   legacy: "Legacy",
   highland: "Highland",

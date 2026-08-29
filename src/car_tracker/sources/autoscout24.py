@@ -25,6 +25,7 @@ from datetime import date
 import httpx
 
 from car_tracker.normalize.currency import market_currency
+from car_tracker.normalize.title import model_display_name
 from car_tracker.sources.base import PartialResults, RawListing, Source
 from car_tracker.sources.http import build_client
 
@@ -120,6 +121,25 @@ def _extract_page_props(html: str) -> dict:
     return json.loads(match.group(1))["props"]["pageProps"]
 
 
+def _compose_title(item: dict, *, model: str) -> str:
+    """A readable headline for one card.
+
+    `modelVersionInput` is the seller's own trim line and is the best thing
+    to show - but it is optional, and an ad with it left blank stored no
+    title at all and rendered as "Untitled". The response still identifies
+    the car (`make`/`model`), and "Tesla Model 3" is exactly what
+    AutoScout24 itself puts on those cards, so fall back to that rather
+    than to nothing.
+    """
+    vehicle = item.get("vehicle") or {}
+    version = (vehicle.get("modelVersionInput") or vehicle.get("modelVersionCustom") or "").strip()
+    if version:
+        return version
+    make = (vehicle.get("make") or "Tesla").strip()
+    name = (vehicle.get("model") or vehicle.get("modelGroup") or "").strip() or model_display_name(model)
+    return f"{make} {name}".strip()
+
+
 def parse_item(item: dict, *, model: str) -> RawListing:
     details = {d["iconName"]: d["data"] for d in item.get("vehicleDetails", [])}
     first_registration = _parse_month_year(details.get("calendar"))
@@ -137,7 +157,7 @@ def parse_item(item: dict, *, model: str) -> RawListing:
         model_year=first_registration.year if first_registration else None,
         first_registration=first_registration,
         variant=item.get("vehicle", {}).get("modelVersionInput"),
-        title_raw=item.get("vehicle", {}).get("modelVersionInput"),
+        title_raw=_compose_title(item, model=model),
         photo_urls=item.get("images", []),
         seller_type=_normalize_seller_type(item.get("seller", {}).get("type")),
         location=item.get("location", {}).get("city"),

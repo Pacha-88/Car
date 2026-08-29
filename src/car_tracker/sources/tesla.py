@@ -23,6 +23,7 @@ from urllib.parse import urlencode
 import httpx
 
 from car_tracker.normalize.currency import market_currency
+from car_tracker.normalize.title import model_display_name
 from car_tracker.sources.base import PartialResults, RawListing, Source
 from car_tracker.sources.fetch import fetch_json
 from car_tracker.sources.http import build_client
@@ -145,9 +146,6 @@ def _build_query(model: str, country: str, *, offset: int = 0) -> dict:
     }
 
 
-MODEL_DISPLAY_NAMES = {"model_y": "Model Y", "model_3": "Model 3"}
-
-
 def _compose_title(item: dict, *, model: str) -> str:
     """A readable title for a Tesla listing.
 
@@ -157,7 +155,7 @@ def _compose_title(item: dict, *, model: str) -> str:
     publish the structured pieces a headline is made of, so compose one:
     "Model Y Long Range AWD · 2022 · Black".
     """
-    parts: list[str] = [MODEL_DISPLAY_NAMES.get(model, model)]
+    parts: list[str] = [model_display_name(model)]
 
     trim = item.get("TrimName") or item.get("TrimVariantCode")
     if trim:

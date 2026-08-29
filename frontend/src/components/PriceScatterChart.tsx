@@ -13,7 +13,7 @@ import { yearColor, yearLegendEntries } from "../lib/colors";
 import type { DealInfo } from "../lib/dealScore";
 import { formatKm, formatYearMonth } from "../lib/format";
 import { useMoney } from "../lib/moneyContext";
-import { CHASSIS_LABELS, SOURCE_LABELS, VARIANT_LABELS, type Listing } from "../types";
+import { CHASSIS_LABELS, SOURCE_LABELS, VARIANT_LABELS, listingTitle, type Listing } from "../types";
 import { DealBadge } from "./DealBadge";
 import { ListingPhoto } from "./ListingPhoto";
 
@@ -273,7 +273,7 @@ function HoverCard({ point, watchlist, onToggleWatchlist, dealScores }: HoverCar
 
       <div className="p-3">
         <div className="mb-1 flex items-start justify-between gap-2">
-          <p className="text-xs font-medium leading-snug text-primary">{listing.titleRaw ?? "Untitled listing"}</p>
+          <p className="text-xs font-medium leading-snug text-primary">{listingTitle(listing)}</p>
           <button
             type="button"
             onClick={(e) => {

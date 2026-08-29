@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import type { DealInfo } from "../lib/dealScore";
 import { formatKm, formatYearMonth } from "../lib/format";
 import { useMoney } from "../lib/moneyContext";
-import { SOURCE_COLOR_VAR, SOURCE_LABELS, VARIANT_LABELS, type Listing } from "../types";
+import { SOURCE_COLOR_VAR, SOURCE_LABELS, VARIANT_LABELS, listingTitle, type Listing } from "../types";
 import { DealBadge } from "./DealBadge";
 import { ListingPhoto } from "./ListingPhoto";
 
@@ -212,7 +212,7 @@ function ListingCard({
         </button>
       </div>
       <div className="flex flex-1 flex-col gap-0.5 p-2">
-        <p className="line-clamp-2 text-[11px] font-medium leading-snug text-primary">{listing.titleRaw ?? "Untitled"}</p>
+        <p className="line-clamp-2 text-[11px] font-medium leading-snug text-primary">{listingTitle(listing)}</p>
         <p className="text-[10px] text-muted">{subtitle(listing)}</p>
         <div className="mt-auto flex items-baseline justify-between pt-1 tabular">
           <span className="text-sm font-semibold text-primary">{money.format(listing.priceEur)}</span>
@@ -249,7 +249,7 @@ function ListingRow({
         <ListingPhoto src={listing.photoUrls[0]} placeholderClassName="text-base" />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-xs font-medium text-primary">{listing.titleRaw ?? "Untitled"}</p>
+        <p className="truncate text-xs font-medium text-primary">{listingTitle(listing)}</p>
         <p className="text-[10px] text-muted">
           {SOURCE_LABELS[listing.source] ?? listing.source} · {COUNTRY_FLAGS[listing.country] ?? listing.country} ·{" "}
           {subtitle(listing)}
