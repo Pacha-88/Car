@@ -1186,3 +1186,52 @@ def test_the_export_leaves_a_trim_the_title_cannot_know():
 
 def test_the_export_leaves_a_titleless_row_alone():
     assert cli.best_variant(_listing_row(source="tesla", title=None, variant="rwd")) == "rwd"
+
+
+def test_one_unreadable_price_does_not_erase_a_car_from_the_export(isolated_db, tmp_path):
+    """The export used to take the newest snapshot outright, so a scrape
+    that misread one card's price as zero made that real car vanish from
+    the dashboard for a day - the same single bad read every other reader
+    (the badge, the index, days-at-current-price) already skips. The card
+    now shows the newest price actually recorded."""
+    with session_scope(get_engine(isolated_db)) as session:
+        session.add(
+            Listing(
+                id="autoscout24:blip",
+                source="autoscout24",
+                source_listing_id="blip",
+                model="model_y",
+                country="DE",
+                url="https://example.com/blip",
+                title_raw="Long Range AWD",
+                first_seen_at=datetime(2026, 8, 25),
+                last_seen_at=datetime(2026, 8, 29),
+                is_active=True,
+            )
+        )
+        session.add(
+            ListingSnapshot(
+                listing_id="autoscout24:blip",
+                observed_at=datetime(2026, 8, 25, 9),
+                price_original=40_000.0,
+                currency_original="EUR",
+                price_eur=40_000.0,
+                mileage_km=50_000,
+            )
+        )
+        session.add(
+            ListingSnapshot(
+                listing_id="autoscout24:blip",
+                observed_at=datetime(2026, 8, 29, 9),
+                price_original=0.0,
+                currency_original="EUR",
+                price_eur=0.0,
+                mileage_km=50_000,
+            )
+        )
+
+    out = tmp_path / "listings.json"
+    cli.cmd_export(argparse.Namespace(out=str(out)))
+    payload = json.loads(out.read_text())
+    assert [l["id"] for l in payload["listings"]] == ["autoscout24:blip"]
+    assert payload["listings"][0]["priceEur"] == 40_000.0

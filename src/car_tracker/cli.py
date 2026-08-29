@@ -15,7 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from car_tracker.analysis.listing_status import (
     days_at_current_price,
     is_new_since_last_scrape,
-    is_plausible_car,
+    is_usable_price,
 )
 from car_tracker.analysis.price_history import market_history, price_points
 from car_tracker.db.models import FxRate, Listing, ListingSnapshot
@@ -547,9 +547,16 @@ def cmd_export(args: argparse.Namespace) -> None:
             snapshots = snapshots_by_listing.get(listing.id)
             if not snapshots:
                 continue
-            latest = max(snapshots, key=lambda s: s.observed_at)
-            if not is_plausible_car(latest.price_eur):
+            # The newest snapshot that actually recorded a price. Taking the
+            # newest outright dropped a real car from the export for a day
+            # whenever one scrape misread its price as zero - the same
+            # single bad read every other reader already skips. A listing
+            # with no usable snapshot at all is not a car (the 1 EUR
+            # referral link lives here), and stays out.
+            usable = [snap for snap in snapshots if is_usable_price(snap)]
+            if not usable:
                 continue
+            latest = max(usable, key=lambda s: s.observed_at)
             listings_out.append(
                 {
                     "id": listing.id,
