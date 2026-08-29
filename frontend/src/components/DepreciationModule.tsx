@@ -238,7 +238,13 @@ export function DepreciationModule({ listings }: DepreciationModuleProps) {
           {cheapest && (
             <InsightCard
               label={`Cheapest to own · ${cheapest.horizonYears}yr`}
-              headline={`buy at ${shortLabel(cheapest.buyAtLabel).replace("_", " ")}`}
+              // The headline names both ends, so the holding period the
+              // label promises is visible rather than implied - it was the
+              // gap between "· 3yr" and a silently shorter span that made
+              // the old figure misleading.
+              headline={`buy at ${shortLabel(cheapest.buyAtLabel).replace("_", " ")} → sell at ${shortLabel(
+                cheapest.sellAtLabel,
+              ).replace("_", " ")}`}
               detail={`${money.formatSigned(-Math.abs(cheapest.annualCostEur))}/yr · ${money.format(cheapest.buyPriceEur)}`}
             />
           )}

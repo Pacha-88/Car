@@ -148,44 +148,61 @@ def steepest_drop(transitions: list[BucketTransition]) -> BucketTransition | Non
 
 
 def curve_flattens_at(transitions: list[BucketTransition]) -> BucketTransition | None:
-    """The transition with the smallest price drop (or, if it happens, a rise)."""
-    return max(transitions, key=lambda t: t.delta_eur) if transitions else None
+    """Where the decline is gentlest - the smallest DROP, not the largest delta.
+
+    Taking the largest delta let a rise win: on the real Model 3 data the
+    6yr -> 7yr+ step is +1.373 EUR (thin-bucket noise, and the catch-all
+    blends ages), and the card announced that price increase as the place
+    the curve "flattens". Only declines can flatten; when nothing declines
+    there is nothing honest to say, so the caller gets None.
+    """
+    declines = [t for t in transitions if t.delta_eur <= 0]
+    return max(declines, key=lambda t: t.delta_eur) if declines else None
 
 
 @dataclass(frozen=True)
 class CheapestToOwn:
     buy_at_label: str
+    sell_at_label: str
     buy_price_eur: float
     annual_cost_eur: float
     horizon_years: int
 
 
 def cheapest_to_own(buckets: list[DepreciationBucket], *, horizon_years: int = 3) -> CheapestToOwn | None:
-    """Cheapest entry age for a fixed `horizon_years`-year ownership window
-    ending at the `horizon_years` bucket: for each earlier non-thin bucket,
-    the annualized cost is (buy-in price - price at the horizon) / years
-    held. Returns whichever entry age minimizes that. None if there's no
-    usable data at the horizon bucket itself, or no earlier bucket to
-    compare against.
+    """Which entry age costs least per year if you keep the car `horizon_years`.
+
+    Every candidate is held for the SAME span - buy at age i, sell at age
+    i + horizon_years - which is what the dashboard's "· 3yr" label
+    promises. This used to measure to a fixed *exit age* instead, so each
+    candidate was held for a different length (3, 2, 1 years) under one
+    label, and any car at or past the horizon age was excluded outright.
+    On the real Model 3 data that recommended "buy at 2yr, 4.546 EUR/yr" -
+    the cost of one year, not three - while a genuine three-year hold from
+    2yr costs 1.739 EUR/yr and the actual cheapest, buying at 4yr for 379
+    EUR/yr, was never even a candidate.
+
+    A candidate needs a priced exit, so the catch-all top bucket
+    ("7yr_plus") cannot serve as one: its median blends every age above the
+    cap, which is not the price of any particular car three years from now.
     """
     usable = {b.bucket_index: b for b in buckets if not b.is_thin}
-    if horizon_years not in usable:
-        return None
 
-    horizon_price = usable[horizon_years].median_price_eur
-    best: tuple[DepreciationBucket, float] | None = None
+    best: tuple[DepreciationBucket, DepreciationBucket, float] | None = None
     for bucket_index, bucket in usable.items():
-        if bucket_index >= horizon_years:
+        exit_bucket = usable.get(bucket_index + horizon_years)
+        if exit_bucket is None or exit_bucket.label.endswith("_plus"):
             continue
-        annual_cost = (bucket.median_price_eur - horizon_price) / (horizon_years - bucket_index)
-        if best is None or annual_cost < best[1]:
-            best = (bucket, annual_cost)
+        annual_cost = (bucket.median_price_eur - exit_bucket.median_price_eur) / horizon_years
+        if best is None or annual_cost < best[2]:
+            best = (bucket, exit_bucket, annual_cost)
 
     if best is None:
         return None
-    bucket, annual_cost = best
+    bucket, exit_bucket, annual_cost = best
     return CheapestToOwn(
         buy_at_label=bucket.label,
+        sell_at_label=exit_bucket.label,
         buy_price_eur=bucket.median_price_eur,
         annual_cost_eur=annual_cost,
         horizon_years=horizon_years,

@@ -138,33 +138,57 @@ export function steepestDrop(transitions: BucketTransition[]): BucketTransition 
   return transitions.reduce((min, t) => (t.deltaEur < min.deltaEur ? t : min));
 }
 
+/** Where the decline is gentlest - the smallest DROP, not the largest delta.
+ *
+ * Taking the largest delta let a rise win: on the real Model 3 data the
+ * 6yr -> 7yr+ step is +1.373 EUR (thin-bucket noise, and the catch-all
+ * blends ages), and the card announced that price increase as the place
+ * the curve "flattens". Only declines can flatten; when nothing declines,
+ * the card has nothing honest to say and hides itself. */
 export function curveFlattensAt(transitions: BucketTransition[]): BucketTransition | null {
-  if (transitions.length === 0) return null;
-  return transitions.reduce((max, t) => (t.deltaEur > max.deltaEur ? t : max));
+  const declines = transitions.filter((t) => t.deltaEur <= 0);
+  if (declines.length === 0) return null;
+  return declines.reduce((gentlest, t) => (t.deltaEur > gentlest.deltaEur ? t : gentlest));
 }
 
 export interface CheapestToOwn {
   buyAtLabel: string;
+  sellAtLabel: string;
   buyPriceEur: number;
   annualCostEur: number;
   horizonYears: number;
 }
 
+/** Which entry age costs least per year if you keep the car `horizonYears`.
+ *
+ * Every candidate is held for the SAME span - buy at age i, sell at age
+ * i + horizonYears - which is what the card's "· 3yr" promises. The earlier
+ * version measured to a fixed *exit age* instead, so each candidate was held
+ * for a different length (3, 2, 1 years) under one label, and any car at or
+ * past the horizon age was excluded outright. On the real Model 3 data that
+ * recommended "buy at 2yr, 4.546 EUR/yr" - the cost of one year, not three -
+ * while a genuine three-year hold from 2yr costs 1.739 EUR/yr and the actual
+ * cheapest, buying at 4yr for 379 EUR/yr, was never even a candidate.
+ *
+ * A candidate needs a priced exit, so the catch-all top bucket ("7yr_plus")
+ * cannot serve as one: its median blends every age above the cap, which is
+ * not the price of any particular car three years from now.
+ */
 export function cheapestToOwn(buckets: DepreciationBucket[], horizonYears = 3): CheapestToOwn | null {
   const usable = new Map(buckets.filter((b) => !b.isThin).map((b) => [b.bucketIndex, b]));
-  const horizonBucket = usable.get(horizonYears);
-  if (!horizonBucket) return null;
 
-  let best: { bucket: DepreciationBucket; annualCost: number } | null = null;
+  let best: { bucket: DepreciationBucket; exit: DepreciationBucket; annualCost: number } | null = null;
   for (const [bucketIndex, bucket] of usable) {
-    if (bucketIndex >= horizonYears) continue;
-    const annualCost = (bucket.medianPriceEur - horizonBucket.medianPriceEur) / (horizonYears - bucketIndex);
-    if (!best || annualCost < best.annualCost) best = { bucket, annualCost };
+    const exit = usable.get(bucketIndex + horizonYears);
+    if (!exit || exit.label.endsWith("_plus")) continue;
+    const annualCost = (bucket.medianPriceEur - exit.medianPriceEur) / horizonYears;
+    if (!best || annualCost < best.annualCost) best = { bucket, exit, annualCost };
   }
   if (!best) return null;
 
   return {
     buyAtLabel: best.bucket.label,
+    sellAtLabel: best.exit.label,
     buyPriceEur: best.bucket.medianPriceEur,
     annualCostEur: best.annualCost,
     horizonYears,

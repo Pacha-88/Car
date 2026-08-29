@@ -5,6 +5,8 @@ import pytest
 from statistics import median as statistics_median
 
 from car_tracker.analysis.depreciation import (
+    BucketTransition,
+    DepreciationBucket,
     DepreciationInput,
     age_bucket_index,
     age_bucket_label,
@@ -131,33 +133,78 @@ def test_steepest_drop_empty_transitions_returns_none():
 def test_cheapest_to_own_picks_lowest_annualized_cost():
     buckets = compute_depreciation_curve(_synthetic_listings(), as_of=AS_OF, min_bucket_size=10)
     by_index = {b.bucket_index: b for b in buckets if not b.is_thin}
-    horizon_price = by_index[3].median_price_eur
 
     # Derive the expected winner from the buckets actually returned (their
     # medians already include the real, small mileage-normalization
     # adjustment - see the module comment above) rather than from raw
     # synthetic prices, so this test only exercises cheapest_to_own's own
-    # argmin logic, not a hand-guessed slope.
-    expected_index = min(
-        (idx for idx in by_index if idx < 3),
-        key=lambda idx: (by_index[idx].median_price_eur - horizon_price) / (3 - idx),
-    )
-    expected_annual_cost = (by_index[expected_index].median_price_eur - horizon_price) / (3 - expected_index)
+    # argmin logic, not a hand-guessed slope. Every candidate is held the
+    # same three years: buy at i, sell at i + 3.
+    candidates = {
+        idx: (by_index[idx].median_price_eur - by_index[idx + 3].median_price_eur) / 3
+        for idx in by_index
+        if idx + 3 in by_index and not by_index[idx + 3].label.endswith("_plus")
+    }
+    expected_index = min(candidates, key=candidates.__getitem__)
 
     result = cheapest_to_own(buckets, horizon_years=3)
     assert result is not None
     assert result.buy_at_label == by_index[expected_index].label
+    assert result.sell_at_label == by_index[expected_index + 3].label
     assert result.buy_price_eur == pytest.approx(by_index[expected_index].median_price_eur)
-    assert result.annual_cost_eur == pytest.approx(expected_annual_cost)
+    assert result.annual_cost_eur == pytest.approx(candidates[expected_index])
     assert result.horizon_years == 3
-    # Sanity check this synthetic data still exercises the interesting
-    # case (an earlier, cheaper-per-year entry point winning over horizon_years - 1).
-    assert expected_index == 2
+    # This fixture spans four usable ages, so exactly one buy/sell pair fits
+    # a three-year hold. The multi-candidate choice - and the older entry
+    # winning it - is covered by test_every_candidate_is_held_for_the_same_span.
+    assert len(candidates) == 1
 
 
-def test_cheapest_to_own_none_when_horizon_bucket_missing():
+def test_cheapest_to_own_none_when_no_candidate_has_a_priced_exit():
     buckets = compute_depreciation_curve(_synthetic_listings(), as_of=AS_OF, min_bucket_size=10)
     assert cheapest_to_own(buckets, horizon_years=99) is None
+
+
+def test_every_candidate_is_held_for_the_same_span():
+    """The bug this replaced: the horizon was an exit AGE, so candidates were
+    held 3, 2 and 1 years under one "· 3yr" label, and any car at or past
+    that age was excluded - on the real Model 3 data the genuinely cheapest
+    three-year hold (buy at 4yr) was never a candidate at all."""
+    buckets = [
+        DepreciationBucket(label="under_1yr", bucket_index=0, n=20, median_price_eur=46_000, is_thin=False, p25_price_eur=45_000, p75_price_eur=47_000),
+        DepreciationBucket(label="2yr", bucket_index=2, n=20, median_price_eur=35_000, is_thin=False, p25_price_eur=34_000, p75_price_eur=36_000),
+        DepreciationBucket(label="3yr", bucket_index=3, n=20, median_price_eur=34_000, is_thin=False, p25_price_eur=33_000, p75_price_eur=35_000),
+        DepreciationBucket(label="4yr", bucket_index=4, n=20, median_price_eur=33_600, is_thin=False, p25_price_eur=33_000, p75_price_eur=34_000),
+        DepreciationBucket(label="5yr", bucket_index=5, n=20, median_price_eur=33_400, is_thin=False, p25_price_eur=33_000, p75_price_eur=34_000),
+    ]
+    result = cheapest_to_own(buckets, horizon_years=3)
+    assert result is not None
+    # under_1yr -> 3yr costs (46000-34000)/3 = 4000/yr; 2yr -> 5yr costs
+    # (35000-33400)/3 = 533/yr. The older entry wins, and could not even be
+    # considered before.
+    assert (result.buy_at_label, result.sell_at_label) == ("2yr", "5yr")
+    assert result.annual_cost_eur == pytest.approx(533.33, rel=1e-3)
+
+
+def test_the_catch_all_bucket_cannot_price_an_exit():
+    """Its median blends every age above the cap - not the price of any
+    particular car three years from now."""
+    buckets = [
+        DepreciationBucket(label="4yr", bucket_index=4, n=20, median_price_eur=33_000, is_thin=False, p25_price_eur=32_000, p75_price_eur=34_000),
+        DepreciationBucket(label="7yr_plus", bucket_index=7, n=20, median_price_eur=20_000, is_thin=False, p25_price_eur=18_000, p75_price_eur=22_000),
+    ]
+    assert cheapest_to_own(buckets, horizon_years=3) is None
+
+
+def test_curve_flattens_at_never_reports_a_price_rise():
+    """A rise is thin-bucket noise, not flattening. Real case: the Model 3
+    6yr -> 7yr+ step is +1.373 EUR."""
+    rise = BucketTransition(from_label="6yr", to_label="7yr_plus", delta_eur=1_373)
+    gentle = BucketTransition(from_label="4yr", to_label="5yr", delta_eur=-142)
+    steep = BucketTransition(from_label="1yr", to_label="2yr", delta_eur=-4_000)
+
+    assert curve_flattens_at([steep, gentle, rise]) is gentle
+    assert curve_flattens_at([rise]) is None, "nothing declined - the card has nothing honest to say"
 
 
 def test_buckets_carry_interquartile_range():
