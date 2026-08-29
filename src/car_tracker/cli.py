@@ -20,7 +20,7 @@ from car_tracker.normalize.currency import EUR, market_currency, to_eur
 from car_tracker.normalize.variant import normalize_variant
 from car_tracker.sources.autoscout24 import COUNTRY_CODES as AUTOSCOUT24_COUNTRIES
 from car_tracker.sources.autoscout24 import AutoScout24Source
-from car_tracker.sources.base import RawListing
+from car_tracker.sources.base import PartialResults, RawListing
 from car_tracker.sources.hasznaltauto import HasznaltautoSource
 from car_tracker.sources.kleinanzeigen import KleinanzeigenSource
 from car_tracker.sources.tesla import TeslaSource
@@ -130,7 +130,12 @@ def _run_scrape(targets: dict[str, dict[str, list[str]]], *, max_pages: int | No
     now = utc_now()
     total_stored = 0
     failures: list[str] = []
+    partials: list[str] = []
     failed_sources: set[str] = set()
+    # Sources whose picture of the market this run is missing part of -
+    # whether a combo failed outright or only came back half-fetched. Both
+    # mean the same thing for retirement: "not seen" is not "sold".
+    incomplete_sources: set[str] = set()
     stored_per_source: dict[str, int] = {}
 
     first_combo = True
@@ -146,25 +151,39 @@ def _run_scrape(targets: dict[str, dict[str, list[str]]], *, max_pages: int | No
                 if not first_combo:
                     time.sleep(COMBO_DELAY_SECONDS)
                 first_combo = False
+                partial_reason: str | None = None
                 try:
                     with source_cls() as source:
-                        raw_listings = source.fetch_listings(model=model, country=country, max_pages=max_pages)
+                        try:
+                            raw_listings = source.fetch_listings(model=model, country=country, max_pages=max_pages)
+                        except PartialResults as partial:
+                            raw_listings, partial_reason = partial.listings, partial.reason
                     with session_scope() as session:
                         for raw in raw_listings:
                             _upsert(session, raw, rates_to_eur=rates_to_eur, observed_at=now)
-                    print(f"ok    {combo}: {len(raw_listings)} listings")
                     total_stored += len(raw_listings)
                     stored_per_source[source_name] = stored_per_source.get(source_name, 0) + len(raw_listings)
+                    if partial_reason is None:
+                        print(f"ok    {combo}: {len(raw_listings)} listings")
+                    else:
+                        # Stored, but deliberately not treated as a clean run:
+                        # the cars on the pages we never fetched are unseen,
+                        # not gone, so this source retires nothing this time.
+                        print(f"partial {combo}: kept {len(raw_listings)} listings, but {partial_reason}")
+                        partials.append(combo)
+                        incomplete_sources.add(source_name)
                 except Exception as exc:  # noqa: BLE001 - one combo's failure must not abort the rest
                     print(f"FAILED {combo}: {exc}")
                     failures.append(combo)
                     failed_sources.add(source_name)
+                    incomplete_sources.add(source_name)
 
-    retired = _retire_unseen(now, sources=targets, skip_sources=failed_sources)
+    retired = _retire_unseen(now, sources=targets, skip_sources=incomplete_sources)
     for source_name, count in sorted(retired.items()):
         print(f"retired {source_name}: {count} listing(s) no longer on the site")
-    for source_name in sorted(failed_sources):
-        print(f"kept    {source_name}: not retiring anything, this source had failing combo(s) this run")
+    for source_name in sorted(incomplete_sources):
+        why = "failing" if source_name in failed_sources else "incomplete"
+        print(f"kept    {source_name}: not retiring anything, this source had {why} combo(s) this run")
 
     # A per-source verdict, because "0 listings stored" across a mixed run
     # doesn't say which site worked - and this is read by someone watching a
@@ -178,7 +197,15 @@ def _run_scrape(targets: dict[str, dict[str, list[str]]], *, max_pages: int | No
         else:
             print(f"  {source_name}: {got} listings")
 
-    print(f"{label} done: {total_stored} listings stored across {len(targets)} sources, {len(failures)} combo(s) failed")
+    partial_note = f", {len(partials)} partial" if partials else ""
+    print(
+        f"{label} done: {total_stored} listings stored across {len(targets)} sources, "
+        f"{len(failures)} combo(s) failed{partial_note}"
+    )
+    if partials:
+        # Worth saying out loud, but not worth failing the run over: a
+        # partial combo still stored real, current prices.
+        print(f"partial combos: {', '.join(partials)}")
     if failures:
         raise SystemExit(f"failed combos: {', '.join(failures)}")
 
@@ -228,11 +255,14 @@ def _retire_unseen(
     scheduled run never retires what `scrape-local` collected (or the
     reverse) just by not having looked at it.
 
-    Sources with any failing combo are skipped entirely. A blocked or
-    broken source returns nothing, and "saw nothing" must never be read as
-    "everything is gone" — that would wipe a whole marketplace from the
-    dashboard on a single bad day, and (since retirement is what stops a
-    listing being exported) hide it until the site came back.
+    Sources with any failing or incomplete combo are skipped entirely. A
+    blocked or broken source returns nothing, and "saw nothing" must never
+    be read as "everything is gone" — that would wipe a whole marketplace
+    from the dashboard on a single bad day, and (since retirement is what
+    stops a listing being exported) hide it until the site came back.
+
+    On top of that, MAX_RETIREMENT_SHARE refuses any implausibly large
+    retirement even when every combo reported success — see below.
     """
     retirable = [name for name in sources if name not in skip_sources]
     if not retirable:
@@ -244,18 +274,47 @@ def _retire_unseen(
     retired: dict[str, int] = {}
     with session_scope() as session:
         for source_name in retirable:
-            result = session.execute(
-                update(Listing)
-                .where(
-                    Listing.source == source_name,
-                    Listing.is_active.is_(True),
-                    Listing.last_seen_at < run_started_at,
-                )
-                .values(is_active=False)
+            unseen_where = (
+                Listing.source == source_name,
+                Listing.is_active.is_(True),
+                Listing.last_seen_at < run_started_at,
             )
-            if result.rowcount:
-                retired[source_name] = result.rowcount
+            active = session.execute(
+                select(func.count()).select_from(Listing).where(Listing.source == source_name, Listing.is_active.is_(True))
+            ).scalar_one()
+            unseen = session.execute(select(func.count()).select_from(Listing).where(*unseen_where)).scalar_one()
+            if not unseen:
+                continue
+            if active >= MIN_ACTIVE_FOR_RETIREMENT_CAP and unseen / active > MAX_RETIREMENT_SHARE:
+                print(
+                    f"kept    {source_name}: would have retired {unseen} of {active} active listings "
+                    f"({unseen / active:.0%}) - refusing, that is a broken scrape, not a sold-out market"
+                )
+                continue
+            session.execute(update(Listing).where(*unseen_where).values(is_active=False))
+            retired[source_name] = unseen
     return retired
+
+
+# The last line of defence for retirement. Every guard above keys off a
+# source *reporting* trouble — but the worst failures are the quiet ones: a
+# throttle page served with HTTP 200 and no ads on it, a markup change that
+# suddenly matches nothing, a site answering with an empty result set. Those
+# all look like a perfectly successful scrape that happened to find no cars,
+# and would retire an entire marketplace.
+#
+# Used cars do not all sell overnight. A run that wants to retire more than
+# half of a source's active listings is describing an event that doesn't
+# happen, so refuse it and say so loudly rather than quietly emptying the
+# dashboard. The listings stay active and simply get picked up again on the
+# next healthy run; a genuinely sold-out market just takes a few days to
+# drain instead of one.
+MAX_RETIREMENT_SHARE = 0.5
+
+# Below this many active listings the share is noise, not signal — a market
+# with three cars in it can legitimately lose two in a day. The cap only
+# applies once a source is big enough for percentages to mean something.
+MIN_ACTIVE_FOR_RETIREMENT_CAP = 10
 
 
 # Marketplaces carry entries that aren't cars: referral links, accessory
@@ -374,10 +433,28 @@ def _upsert(session, raw: RawListing, *, rates_to_eur: dict[str, float], observe
     else:
         listing.last_seen_at = observed_at
         listing.is_active = True
+        # Refresh descriptive fields, `or` so a scrape that happens to come
+        # back thin never blanks out good data we already hold.
+        #
+        # This is not just an optimisation. A listing is only written in
+        # full the very first time it is seen, so any field that was missing
+        # or wrong then stayed that way for the life of the listing, however
+        # many times it was scraped afterwards. That is how every Tesla
+        # already in the database kept reading "Untitled" (this source used
+        # to store no title at all) and why a listing first seen without
+        # photos never got one: fixing the source alone would only have
+        # helped cars first listed after the fix.
         listing.chassis_gen = chassis_gen or listing.chassis_gen
         listing.variant = variant or listing.variant
         listing.power_kw = raw.power_kw or listing.power_kw
         listing.color = raw.color or listing.color
+        listing.title_raw = raw.title_raw or listing.title_raw
+        listing.photo_urls = raw.photo_urls or listing.photo_urls
+        listing.location = raw.location or listing.location
+        listing.url = raw.url or listing.url
+        listing.model_year = raw.model_year or listing.model_year
+        listing.first_registration = raw.first_registration or listing.first_registration
+        listing.seller_type = raw.seller_type or listing.seller_type
 
     session.add(
         ListingSnapshot(

@@ -3,7 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from car_tracker.sources.kleinanzeigen import _ARTICLE_RE, parse_item
+from car_tracker.sources.base import PartialResults
+from car_tracker.sources.kleinanzeigen import KleinanzeigenSource, _ARTICLE_RE, parse_item
 
 FIXTURE_HTML = (Path(__file__).parent / "fixtures" / "kleinanzeigen_search_sample.html").read_text(encoding="utf-8")
 
@@ -86,3 +87,34 @@ def test_parse_first_registration(tags, expected):
     from car_tracker.sources.kleinanzeigen import _parse_first_registration
 
     assert _parse_first_registration(tags) == expected
+
+
+# --- partial-page resilience --------------------------------------------
+# From a real nightly run: kleinanzeigen/model_y/DE raised on a 403 at page 2
+# and the whole combo was discarded, throwing away a good page 1.
+
+class _FlakyPageSource(KleinanzeigenSource):
+    def __init__(self, good_pages: int, article_html: str):
+        self._good_pages = good_pages
+        self._article_html = article_html
+        self.attempted: list[int] = []
+
+    def fetch_raw_page(self, *, model: str, page: int = 1) -> str:
+        self.attempted.append(page)
+        if page > self._good_pages:
+            raise RuntimeError("Client error '403 Forbidden'")
+        return self._article_html
+
+
+def test_a_failing_page_keeps_the_ads_earlier_pages_returned():
+    source = _FlakyPageSource(good_pages=1, article_html=FIXTURE_HTML)
+    with pytest.raises(PartialResults) as caught:
+        source.fetch_listings(model="model_y", country="DE")
+    assert caught.value.listings, "page 1's ads must survive a 403 on page 2"
+    assert source.attempted == [1, 2]
+
+
+def test_a_failure_on_the_very_first_page_still_raises():
+    source = _FlakyPageSource(good_pages=0, article_html=FIXTURE_HTML)
+    with pytest.raises(RuntimeError):
+        source.fetch_listings(model="model_y", country="DE")

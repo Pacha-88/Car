@@ -4,12 +4,14 @@ from pathlib import Path
 import pytest
 
 from car_tracker.sources.autoscout24 import (
+    AutoScout24Source,
     _extract_page_props,
     _parse_km,
     _parse_month_year,
     _parse_power_kw,
     parse_item,
 )
+from car_tracker.sources.base import PartialResults
 
 FIXTURE_HTML = (Path(__file__).parent / "fixtures" / "autoscout24_search_sample.html").read_text(encoding="utf-8")
 
@@ -94,3 +96,54 @@ def test_parse_month_year(text, expected):
 )
 def test_parse_power_kw(text, expected):
     assert _parse_power_kw(text) == expected
+
+
+# --- partial-page resilience --------------------------------------------
+# From a real nightly run: autoscout24/model_y/IT raised on a 502 at page 13
+# and the whole combo was discarded, losing twelve good pages. Italy simply
+# vanished from the dashboard that day.
+
+class _FlakyPageSource(AutoScout24Source):
+    """Serves `good_pages` pages, then raises - like a mid-pagination 502."""
+
+    def __init__(self, good_pages: int):
+        self._good_pages = good_pages
+        self.attempted: list[int] = []
+
+    def fetch_raw_page(self, *, model: str, country: str, page: int = 1) -> dict:
+        self.attempted.append(page)
+        if page > self._good_pages:
+            raise RuntimeError("Server error '502 Bad Gateway'")
+        return {
+            "numberOfPages": 99,
+            "listings": [
+                {
+                    "id": f"p{page}-{i}",
+                    "vehicle": {"modelVersionInput": "Long Range AWD"},
+                    "price": {"priceRaw": 30000},
+                    "location": {"countryCode": country, "city": "Rome"},
+                    "images": [f"https://img/{page}-{i}.jpg"],
+                    "vehicleDetails": [],
+                    "seller": {"type": "dealer"},
+                    "url": f"/offers/{page}-{i}",
+                }
+                for i in range(2)
+            ],
+        }
+
+
+def test_a_failing_page_keeps_the_listings_earlier_pages_returned():
+    source = _FlakyPageSource(good_pages=3)
+    with pytest.raises(PartialResults) as caught:
+        source.fetch_listings(model="model_y", country="IT")
+    assert len(caught.value.listings) == 6, "three good pages of two listings each must survive"
+    assert "page 4" in caught.value.reason
+    assert source.attempted == [1, 2, 3, 4]  # stopped at the first failure
+
+
+def test_a_failure_on_the_very_first_page_still_raises():
+    """Nothing to salvage, and silence would let a fully broken source look
+    like a source with no cars - which is what retirement keys off."""
+    source = _FlakyPageSource(good_pages=0)
+    with pytest.raises(RuntimeError):
+        source.fetch_listings(model="model_y", country="IT")

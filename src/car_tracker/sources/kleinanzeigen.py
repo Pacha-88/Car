@@ -33,7 +33,7 @@ from datetime import date
 
 import httpx
 
-from car_tracker.sources.base import RawListing, Source
+from car_tracker.sources.base import PartialResults, RawListing, Source
 from car_tracker.sources.http import build_client
 
 BASE_URL = "https://www.kleinanzeigen.de/s-autos"
@@ -81,9 +81,25 @@ class KleinanzeigenSource(Source):
         listings: list[RawListing] = []
         page = 1
         while max_pages is None or page <= max_pages:
-            html = self.fetch_raw_page(model=model, page=page)
+            try:
+                html = self.fetch_raw_page(model=model, page=page)
+            except Exception as exc:
+                # Same reasoning as autoscout24: one live run threw away a
+                # whole page of good Model Y ads because page 2 answered 403.
+                if not listings:
+                    raise
+                raise PartialResults(listings, f"page {page} failed ({type(exc).__name__}: {exc})") from exc
             articles = _ARTICLE_RE.findall(html)
             if not articles:
+                # Could be the end of the results, or a throttle page that
+                # simply has no ads on it - HTTP 200 either way, and nothing
+                # in the response tells them apart. Calling it partial would
+                # be wrong on every healthy run (the last page is always
+                # empty, that is how the loop ends) and would mean this
+                # source could never retire anything. So stop here, and let
+                # the retirement cap in cli.py catch the case where this was
+                # a throttle: a run that suddenly "sees" a fraction of the
+                # ads is refused there, whatever the cause.
                 break
             listings.extend(parsed for a in articles if (parsed := parse_item(a, model=model)) is not None)
             page += 1

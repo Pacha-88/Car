@@ -41,6 +41,21 @@ class RawListing:
     color: str | None = None
 
 
+class PartialResults(Exception):
+    """Some pages were fetched, but not all of them.
+
+    Carries what was collected so the caller can still store it, while
+    making the incompleteness impossible to ignore — "not seen this run"
+    must not be read as "sold" when the pages it would have appeared on
+    were never fetched. Retirement keys off exactly that distinction.
+    """
+
+    def __init__(self, listings: list["RawListing"], reason: str) -> None:
+        super().__init__(reason)
+        self.listings = listings
+        self.reason = reason
+
+
 class Source(ABC):
     """One scrapeable source (a site, or a site+market pairing)."""
 

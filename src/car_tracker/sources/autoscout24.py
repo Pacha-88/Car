@@ -25,7 +25,7 @@ from datetime import date
 import httpx
 
 from car_tracker.normalize.currency import market_currency
-from car_tracker.sources.base import RawListing, Source
+from car_tracker.sources.base import PartialResults, RawListing, Source
 from car_tracker.sources.http import build_client
 
 BASE_URL = "https://www.autoscout24.com/lst/tesla"
@@ -66,7 +66,22 @@ class AutoScout24Source(Source):
         page = 1
         total_pages = 1
         while page <= total_pages and (max_pages is None or page <= max_pages):
-            page_props = self.fetch_raw_page(model=model, country=country, page=page)
+            try:
+                page_props = self.fetch_raw_page(model=model, country=country, page=page)
+            except Exception as exc:
+                # Keep what earlier pages already gave us. A single bad page
+                # used to abort the whole combo and discard everything with
+                # it: one live run lost twelve good pages of Italian Model Y
+                # listings to a 502 on page thirteen. Partial data beats none,
+                # and a country vanishing from the dashboard for a day is a
+                # much worse outcome than a short tail.
+                #
+                # PartialResults rather than a plain return, because the
+                # caller has to know the tail is missing: the cars on the
+                # pages we never fetched are not gone, they are unseen.
+                if not listings:
+                    raise
+                raise PartialResults(listings, f"page {page} failed ({type(exc).__name__}: {exc})") from exc
             total_pages = page_props.get("numberOfPages", 1)
             items = page_props.get("listings", [])
             listings.extend(parse_item(item, model=model) for item in items)

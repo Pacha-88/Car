@@ -100,3 +100,37 @@ def test_currency_code_missing_falls_back_to_market_currency():
     del item["CurrencyCode"]
     raw = parse_item(item, model="model_y", country="HU")
     assert raw.currency_original == "HUF"
+
+
+# --- titles (added after every Tesla card in the dashboard read "Untitled") ---
+
+def test_listing_gets_a_readable_title():
+    """Tesla's inventory has no free-text headline, so this source stored
+    None and the dashboard rendered "Untitled" for every Tesla car while its
+    neighbours showed real ad titles. Compose one from the structured fields
+    Tesla does publish."""
+    item = {
+        "VIN": "X1",
+        "Price": 30000,
+        "Year": 2022,
+        "TrimName": "Long Range AWD",
+        "PAINT": ["MIDNIGHT_SILVER"],
+    }
+    listing = parse_item(item, model="model_y", country="DE")
+    assert listing.title_raw == "Model Y · Long Range AWD · 2022 · Midnight Silver"
+
+
+def test_title_degrades_gracefully_when_fields_are_missing():
+    """A sparse listing must still get something better than nothing."""
+    listing = parse_item({"VIN": "X2", "Price": 30000}, model="model_3", country="HU")
+    assert listing.title_raw == "Model 3"
+
+
+def test_title_falls_back_to_the_trim_code_when_there_is_no_trim_name():
+    listing = parse_item(
+        {"VIN": "X3", "Price": 1, "TrimVariantCode": "LR_AWD", "Year": 2024},
+        model="model_y",
+        country="AT",
+    )
+    assert "LR_AWD" in listing.title_raw
+    assert "2024" in listing.title_raw

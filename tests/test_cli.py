@@ -17,7 +17,7 @@ from sqlalchemy import select
 from car_tracker import cli
 from car_tracker.db.models import Listing, ListingSnapshot
 from car_tracker.db.session import get_engine, init_db, session_scope
-from car_tracker.sources.base import RawListing, Source
+from car_tracker.sources.base import PartialResults, RawListing, Source
 
 
 class _FakeOkSource(Source):
@@ -369,3 +369,266 @@ def test_export_drops_entries_too_cheap_to_be_a_car(isolated_db, tmp_path):
     cli.cmd_export(argparse.Namespace(out=str(out)))
     exported = {l["id"] for l in json.loads(out.read_text(encoding="utf-8"))["listings"]}
     assert exported == {"real:1"}
+
+
+# --- partial results & the retirement cap --------------------------------
+
+
+class _FakePartialSource(Source):
+    """A source that fetched some pages and then hit a wall.
+
+    The real shape of this: autoscout24/model_y/IT answered 502 on page 13
+    of a live run. Twelve pages of good listings were in hand; the rest of
+    the market was simply never looked at.
+    """
+
+    name = "fake_ok"
+
+    def __enter__(self) -> "_FakePartialSource":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        return None
+
+    def fetch_listings(self, *, model: str, country: str, max_pages: int | None = None) -> list[RawListing]:
+        raise PartialResults(
+            [
+                RawListing(
+                    source="fake_ok",
+                    source_listing_id=f"{model}-{country}",
+                    model=model,
+                    country=country,
+                    url="https://example.com/1",
+                    price_original=30_000,
+                    currency_original="EUR",
+                )
+            ],
+            "page 13 failed (HTTPStatusError: 502)",
+        )
+
+
+def test_a_partial_combo_still_stores_what_it_managed_to_fetch(isolated_db, monkeypatch):
+    monkeypatch.setattr(cli, "fetch_latest_rates", lambda: (date(2026, 8, 28), {"HUF": 0.0025}))
+    monkeypatch.setattr(cli, "SOURCES", {"fake_ok": _FakePartialSource})
+    monkeypatch.setattr(cli, "SCRAPE_TARGETS", {"fake_ok": {"models": ["model_y"], "countries": ["DE"]}})
+
+    cli.cmd_scrape_all(argparse.Namespace(max_pages=None, include_blocked=True))  # not a failure: real data arrived
+
+    with session_scope(get_engine(isolated_db)) as session:
+        stored = [listing.id for listing in session.execute(select(Listing)).scalars()]
+    assert stored == ["fake_ok:model_y-DE"]
+
+
+def test_a_partial_combo_never_retires_the_listings_it_did_not_get_to(isolated_db, monkeypatch):
+    """The whole point of PartialResults. Pages 13+ were never fetched, so
+    the cars listed on them were not seen - and "not seen" is only evidence
+    of a sale when the whole market was actually looked at."""
+    _seed_one_listing(isolated_db, source="fake_ok", seen_at=datetime(2026, 1, 1))
+
+    monkeypatch.setattr(cli, "fetch_latest_rates", lambda: (date(2026, 8, 28), {"HUF": 0.0025}))
+    monkeypatch.setattr(cli, "SOURCES", {"fake_ok": _FakePartialSource})
+    monkeypatch.setattr(cli, "SCRAPE_TARGETS", {"fake_ok": {"models": ["model_y"], "countries": ["DE"]}})
+
+    cli.cmd_scrape_all(argparse.Namespace(max_pages=None, include_blocked=True))
+
+    assert _is_active(isolated_db, "fake_ok:old") is True
+
+
+def test_a_partial_combo_does_not_fail_the_run(isolated_db, monkeypatch, capsys):
+    """It stored real, current prices - failing the whole nightly run over a
+    missing tail would just train everyone to ignore a red build. It is
+    still reported, because a source that is quietly always partial is a
+    problem worth seeing."""
+    monkeypatch.setattr(cli, "fetch_latest_rates", lambda: (date(2026, 8, 28), {"HUF": 0.0025}))
+    monkeypatch.setattr(cli, "SOURCES", {"fake_ok": _FakePartialSource})
+    monkeypatch.setattr(cli, "SCRAPE_TARGETS", {"fake_ok": {"models": ["model_y"], "countries": ["DE"]}})
+
+    cli.cmd_scrape_all(argparse.Namespace(max_pages=None, include_blocked=True))
+
+    output = capsys.readouterr().out
+    assert "partial fake_ok/model_y/DE" in output
+    assert "page 13 failed" in output
+
+
+def _seed_listings(db_url: str, *, source: str, count: int, seen_at) -> None:
+    with session_scope(get_engine(db_url)) as session:
+        for i in range(count):
+            session.add(
+                Listing(
+                    id=f"{source}:old-{i}",
+                    source=source,
+                    source_listing_id=f"old-{i}",
+                    model="model_y",
+                    country="DE",
+                    url=f"https://example.com/old-{i}",
+                    first_seen_at=seen_at,
+                    last_seen_at=seen_at,
+                    is_active=True,
+                )
+            )
+
+
+def _active_count(db_url: str, source: str) -> int:
+    with session_scope(get_engine(db_url)) as session:
+        return len(
+            list(
+                session.execute(
+                    select(Listing.id).where(Listing.source == source, Listing.is_active.is_(True))
+                ).scalars()
+            )
+        )
+
+
+def test_an_implausibly_large_retirement_is_refused_even_when_the_combo_reported_success(
+    isolated_db, monkeypatch, capsys
+):
+    """The quiet failure mode: a throttle page served as HTTP 200 with no
+    ads on it looks exactly like a successful scrape of an empty market. No
+    guard keyed on a source *reporting* trouble can catch that, so this one
+    keys on the claim itself - forty cars do not sell overnight."""
+    _seed_listings(isolated_db, source="fake_ok", count=40, seen_at=datetime(2026, 1, 1))
+
+    monkeypatch.setattr(cli, "fetch_latest_rates", lambda: (date(2026, 8, 28), {"HUF": 0.0025}))
+    monkeypatch.setattr(cli, "SOURCES", {"fake_ok": _FakeOkSource})
+    monkeypatch.setattr(cli, "SCRAPE_TARGETS", {"fake_ok": {"models": ["model_y"], "countries": ["DE"]}})
+
+    cli.cmd_scrape_all(argparse.Namespace(max_pages=None, include_blocked=True))
+
+    assert _active_count(isolated_db, "fake_ok") == 41, "the seeded 40 must survive, plus the one just seen"
+    assert "refusing" in capsys.readouterr().out
+
+
+def test_an_ordinary_days_worth_of_sales_still_retires(isolated_db, monkeypatch):
+    """The cap must not become a way of never retiring anything: a normal
+    run, where most listings are seen again and a few are not, retires."""
+    _seed_listings(isolated_db, source="fake_ok", count=40, seen_at=datetime(2026, 1, 1))
+
+    class _SeesMostOfThem(_FakeOkSource):
+        def fetch_listings(self, *, model, country, max_pages=None):
+            return [
+                RawListing(
+                    source="fake_ok",
+                    source_listing_id=f"old-{i}",
+                    model=model,
+                    country=country,
+                    url=f"https://example.com/old-{i}",
+                    price_original=30_000,
+                    currency_original="EUR",
+                )
+                for i in range(37)  # three of the forty are gone
+            ]
+
+    monkeypatch.setattr(cli, "fetch_latest_rates", lambda: (date(2026, 8, 28), {"HUF": 0.0025}))
+    monkeypatch.setattr(cli, "SOURCES", {"fake_ok": _SeesMostOfThem})
+    monkeypatch.setattr(cli, "SCRAPE_TARGETS", {"fake_ok": {"models": ["model_y"], "countries": ["DE"]}})
+
+    cli.cmd_scrape_all(argparse.Namespace(max_pages=None, include_blocked=True))
+
+    assert _active_count(isolated_db, "fake_ok") == 37
+
+
+def test_the_cap_does_not_apply_to_a_source_with_only_a_handful_of_listings(isolated_db, monkeypatch):
+    """A market with three cars in it can legitimately lose two in a day -
+    percentages only mean something once there are enough listings."""
+    _seed_listings(isolated_db, source="fake_ok", count=3, seen_at=datetime(2026, 1, 1))
+
+    monkeypatch.setattr(cli, "fetch_latest_rates", lambda: (date(2026, 8, 28), {"HUF": 0.0025}))
+    monkeypatch.setattr(cli, "SOURCES", {"fake_ok": _FakeOkSource})
+    monkeypatch.setattr(cli, "SCRAPE_TARGETS", {"fake_ok": {"models": ["model_y"], "countries": ["DE"]}})
+
+    cli.cmd_scrape_all(argparse.Namespace(max_pages=None, include_blocked=True))
+
+    assert _active_count(isolated_db, "fake_ok") == 1, "only the listing this run saw"
+
+
+# --- re-scraping an already-known listing --------------------------------
+
+
+def test_a_rescrape_backfills_fields_that_were_missing_when_the_listing_was_first_stored(
+    isolated_db, monkeypatch
+):
+    """Regression, and a bad one: a listing was only ever written in full on
+    first sight, so a field that was missing then stayed missing forever. A
+    whole run of Tesla listings read "Untitled" in the dashboard long after
+    the source had been fixed to produce titles, because those listings were
+    already known and re-scraping them never touched the column."""
+    with session_scope(get_engine(isolated_db)) as session:
+        session.add(
+            Listing(
+                id="fake_ok:model_y-DE",
+                source="fake_ok",
+                source_listing_id="model_y-DE",
+                model="model_y",
+                country="DE",
+                url="https://example.com/1",
+                title_raw=None,
+                photo_urls=[],
+                first_seen_at=datetime(2026, 1, 1),
+                last_seen_at=datetime(2026, 1, 1),
+                is_active=True,
+            )
+        )
+
+    class _NowWithTitleAndPhotos(_FakeOkSource):
+        def fetch_listings(self, *, model, country, max_pages=None):
+            return [
+                RawListing(
+                    source="fake_ok",
+                    source_listing_id=f"{model}-{country}",
+                    model=model,
+                    country=country,
+                    url="https://example.com/1",
+                    price_original=30_000,
+                    currency_original="EUR",
+                    title_raw="Model Y · Long Range AWD · 2022",
+                    photo_urls=["https://example.com/photo.jpg"],
+                    location="Berlin",
+                )
+            ]
+
+    monkeypatch.setattr(cli, "fetch_latest_rates", lambda: (date(2026, 8, 28), {"HUF": 0.0025}))
+    monkeypatch.setattr(cli, "SOURCES", {"fake_ok": _NowWithTitleAndPhotos})
+    monkeypatch.setattr(cli, "SCRAPE_TARGETS", {"fake_ok": {"models": ["model_y"], "countries": ["DE"]}})
+
+    cli.cmd_scrape_all(argparse.Namespace(max_pages=None, include_blocked=True))
+
+    with session_scope(get_engine(isolated_db)) as session:
+        listing = session.get(Listing, "fake_ok:model_y-DE")
+        assert listing.title_raw == "Model Y · Long Range AWD · 2022"
+        assert listing.photo_urls == ["https://example.com/photo.jpg"]
+        assert listing.location == "Berlin"
+
+
+def test_a_thin_rescrape_does_not_blank_out_details_already_held(isolated_db, monkeypatch):
+    """The other half of the same rule: refreshing must never be a way to
+    lose data. A source that returns a listing with no photos this time
+    (a slow image CDN, a trimmed response) keeps the ones it gave before."""
+    with session_scope(get_engine(isolated_db)) as session:
+        session.add(
+            Listing(
+                id="fake_ok:model_y-DE",
+                source="fake_ok",
+                source_listing_id="model_y-DE",
+                model="model_y",
+                country="DE",
+                url="https://example.com/1",
+                title_raw="A good title",
+                photo_urls=["https://example.com/known.jpg"],
+                location="Berlin",
+                first_seen_at=datetime(2026, 1, 1),
+                last_seen_at=datetime(2026, 1, 1),
+                is_active=True,
+            )
+        )
+
+    monkeypatch.setattr(cli, "fetch_latest_rates", lambda: (date(2026, 8, 28), {"HUF": 0.0025}))
+    monkeypatch.setattr(cli, "SOURCES", {"fake_ok": _FakeOkSource})  # returns no title, no photos
+    monkeypatch.setattr(cli, "SCRAPE_TARGETS", {"fake_ok": {"models": ["model_y"], "countries": ["DE"]}})
+
+    cli.cmd_scrape_all(argparse.Namespace(max_pages=None, include_blocked=True))
+
+    with session_scope(get_engine(isolated_db)) as session:
+        listing = session.get(Listing, "fake_ok:model_y-DE")
+        assert listing.title_raw == "A good title"
+        assert listing.photo_urls == ["https://example.com/known.jpg"]
+        assert listing.location == "Berlin"

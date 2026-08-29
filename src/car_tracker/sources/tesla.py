@@ -131,6 +131,36 @@ def _build_query(model: str, country: str, *, offset: int = 0) -> dict:
     }
 
 
+MODEL_DISPLAY_NAMES = {"model_y": "Model Y", "model_3": "Model 3"}
+
+
+def _compose_title(item: dict, *, model: str) -> str:
+    """A readable title for a Tesla listing.
+
+    Unlike a marketplace ad, Tesla's inventory has no free-text headline -
+    this source used to store None, so every Tesla card in the dashboard
+    read "Untitled" while its neighbours showed real ad titles. Tesla does
+    publish the structured pieces a headline is made of, so compose one:
+    "Model Y Long Range AWD · 2022 · Black".
+    """
+    parts: list[str] = [MODEL_DISPLAY_NAMES.get(model, model)]
+
+    trim = item.get("TrimName") or item.get("TrimVariantCode")
+    if trim:
+        parts.append(str(trim))
+
+    year = item.get("Year")
+    if year:
+        parts.append(str(year))
+
+    paint = item.get("PAINT") or []
+    if paint:
+        # "MIDNIGHT_SILVER" -> "Midnight Silver"
+        parts.append(str(paint[0]).replace("_", " ").title())
+
+    return " · ".join(parts)
+
+
 def parse_item(item: dict, *, model: str, country: str) -> RawListing:
     """Field mapping verified against a real response (see module docstring).
 
@@ -158,7 +188,7 @@ def parse_item(item: dict, *, model: str, country: str) -> RawListing:
         model_year=item.get("Year"),
         first_registration=_parse_iso_date(item.get("FirstRegistrationDate")),
         variant=item.get("TrimVariantCode") or item.get("TrimName"),
-        title_raw=None,  # Tesla listings don't have a free-text title to re-parse later, unlike marketplace ads
+        title_raw=_compose_title(item, model=model),
         photo_urls=photos,
         seller_type="tesla",
         location=item.get("City"),
