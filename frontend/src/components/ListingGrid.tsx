@@ -344,9 +344,15 @@ function ListingRow({
           {SOURCE_LABELS[listing.source] ?? listing.source} · {COUNTRY_FLAGS[listing.country] ?? listing.country} ·{" "}
           {subtitle(listing)}
           {listing.hasFsd && <span className="ml-1 font-semibold text-secondary">· FSD</span>}
-          {days !== null && days > 0 && (
+          {/* From a week up. The card's own comment already names the
+              failure mode - "on the day the tracker launches every card
+              would carry it" - and the row got no threshold at all, so on
+              real day-one data all 621 rows read "· 1 day": uniform noise
+              that distinguishes nothing. A week is where the numbers start
+              to differ between cars. */}
+          {days !== null && days >= 7 && (
             <span title={marketTimeTitle(listing, days, typical)} className={slow ? "ml-1 font-semibold text-status-warning" : "ml-1"}>
-              · {days} day{days === 1 ? "" : "s"}
+              · {days} days
             </span>
           )}
         </p>
