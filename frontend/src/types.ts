@@ -74,6 +74,9 @@ export interface MarketDay {
   medianEur: number;
   p25Eur: number;
   p75Eur: number;
+  /** Cars believed on sale that day - between two scrapes of its source a
+   * car keeps its last asked price, so sources on different cadences
+   * cannot sawtooth the median. */
   n: number;
   /** 100 on the first day, moved only by the price changes of cars listed
    * on both that day and the one before. Unlike the median, it cannot be

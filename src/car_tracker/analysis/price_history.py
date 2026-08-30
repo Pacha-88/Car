@@ -42,17 +42,6 @@ from car_tracker.db.models import ListingSnapshot
 MIN_DAY_SAMPLE = 5
 MIN_MATCHED_PAIRS = 5
 
-# ...and below this share of what the last few days saw, the scrape broke
-# rather than the market shrinking. A run that hits a bot wall partway
-# through stores a real but lopsided sample - every German car and no
-# Hungarian ones, say - whose median is a fact about the outage, not about
-# prices, and which the chart would otherwise draw as a one-day crash.
-# Compared against recent days rather than the whole record so that adding
-# a source, or a market that genuinely grows, does not retroactively
-# invalidate everything before it.
-MIN_SHARE_OF_RECENT = 0.5
-RECENT_DAYS = 7
-
 
 @dataclass(frozen=True)
 class PricePoint:
@@ -115,9 +104,32 @@ def market_history(
     model_of: dict[str, str],
     min_day_sample: int = MIN_DAY_SAMPLE,
 ) -> list[MarketDay]:
-    """A daily median and a mix-proof index per model, oldest first."""
-    # (model, day) -> {listing_id: (price_eur, price_original)}
+    """A daily median and a mix-proof index per model, oldest first.
+
+    The median is taken over every car BELIEVED ON SALE that day, not just
+    the cars whose source happened to be scraped that day: between two
+    observations a listing keeps its last asked price. Without that, the
+    sources' different cadences write themselves into the series - the CI
+    scrapes AutoScout24 daily while Használtautó moves only when someone
+    runs scrape-local from home, so on a plain CI day the Hungarian cars
+    vanished from the sample and the median swung ~4% with nobody
+    repricing anything, then swung back on the next manual run. A car is
+    believed on sale from its first usable snapshot to its last; a partial
+    scrape likewise no longer distorts the median, because the cars the
+    broken run missed are carried at their last known price.
+
+    The index is stricter: carried prices claim "unchanged", which is not
+    knowledge, so its steps use only prices actually OBSERVED on both of
+    the two days being compared - and the comparison base only advances
+    when a step was actually measured (enough matched pairs). Advancing it
+    regardless lost real moves: a fleet repriced 10% across a day it did
+    not overlap with came back with the index still at 100, because the
+    base had moved past the day the old prices were last seen.
+    """
+    # (model, day) -> {listing_id: (price_eur, price_original)}, observed.
     by_day: dict[tuple[str, date], dict[str, tuple[float, float]]] = defaultdict(dict)
+    # listing -> its usable price points, in day order, for carry-forward.
+    points_of: dict[str, list[tuple[date, float, float]]] = defaultdict(list)
     for snapshot in snapshots:
         model = model_of.get(snapshot.listing_id)
         if model is None or not is_usable_price(snapshot):
@@ -128,47 +140,49 @@ def market_history(
             snapshot.price_eur,
             snapshot.price_original,
         )
+    for (model, day), cars in by_day.items():
+        for listing_id, prices in cars.items():
+            points_of[listing_id].append((day, *prices))
+    for point_list in points_of.values():
+        point_list.sort()
 
     out: list[MarketDay] = []
     for model in sorted({model for model, _ in by_day}):
         days = sorted(day for m, day in by_day if m == model)
+        model_points = {
+            listing_id: pts for listing_id, pts in points_of.items() if model_of.get(listing_id) == model
+        }
         index = 100.0
-        previous_day: date | None = None
-        recent_counts: list[int] = []
+        # The observed prices of the last day a step could be MEASURED
+        # against. Held deliberately across low-overlap days.
+        base: dict[str, tuple[float, float]] | None = None
         for day in days:
-            cars = by_day[(model, day)]
-            if len(cars) < min_day_sample:
-                continue
-            partial = bool(recent_counts) and len(cars) < MIN_SHARE_OF_RECENT * median(recent_counts)
-            # Recorded whether or not the day is reported, so the window
-            # tracks what is actually being scraped. Gate on reported days
-            # alone and a lasting drop in coverage - a country taken out of
-            # the run, a source retired - measures itself against a level
-            # that no longer exists and silently freezes the chart from
-            # that day on. This way one bad day is dropped and a new normal
-            # is absorbed within a week.
-            recent_counts.append(len(cars))
-            del recent_counts[:-RECENT_DAYS]
-            if partial:
-                # Skipping also keeps it out of the index: `previous_day`
-                # stays put, so the next good day is chained against the
-                # last good one rather than against a fragment.
-                continue
+            observed = by_day[(model, day)]
             pairs = 0
-            if previous_day is not None:
-                step, pairs = _step(by_day[(model, previous_day)], cars)
-                index *= step
-            previous_day = day
-            prices = [eur for eur, _ in cars.values()]
-            low, high = _quartiles(prices)
+            if base is None:
+                base = observed
+            else:
+                step, pairs = _step(base, observed)
+                if pairs:
+                    index *= step
+                    base = observed
+            # Everyone believed on sale today, at their last known price.
+            carried: list[float] = []
+            for pts in model_points.values():
+                if pts[0][0] <= day <= pts[-1][0]:
+                    latest = max(pt for pt in pts if pt[0] <= day)
+                    carried.append(latest[1])
+            if len(carried) < min_day_sample:
+                continue
+            low, high = _quartiles(carried)
             out.append(
                 MarketDay(
                     on=day,
                     model=model,
-                    median_eur=median(prices),
+                    median_eur=median(carried),
                     p25_eur=low,
                     p75_eur=high,
-                    n=len(prices),
+                    n=len(carried),
                     index=index,
                     matched_pairs=pairs,
                 )

@@ -201,27 +201,68 @@ def _day(model_of, day, count, price):
 
 
 def test_a_scrape_that_broke_partway_is_not_a_one_day_crash():
-    """A run that hits a bot wall partway through stores a real but lopsided
-    sample. Its median is a fact about the outage, not about prices - drawn
-    as a point it is a 37% crash and a full recovery the next morning."""
+    """A run that hits a bot wall partway through observes only a subset -
+    at their true, unchanged prices. The cars the broken run missed are
+    carried at their last known price, so the day's median is a fact about
+    the market, not the outage, and the index steps only on what was
+    actually seen."""
     model_of: dict[str, str] = {}
     snaps: list = []
     for day in range(1, 7):
         snaps += _day(model_of, day, 300, 40000.0)
-    snaps += _day(model_of, 7, 20, 25000.0)  # the wall
+    snaps += _day(model_of, 7, 20, 40000.0)  # the wall: 20 cars seen, 280 missed
     for day in (8, 9):
         snaps += _day(model_of, day, 300, 40000.0)
 
     days = market_history(snaps, model_of=model_of)
-    assert [d.on.day for d in days] == [1, 2, 3, 4, 5, 6, 8, 9]
-    # Chained across the fragment, not through it.
+    assert [d.on.day for d in days] == [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    wall = next(d for d in days if d.on.day == 7)
+    assert wall.n == 300, "the missed cars are carried, not gone"
+    assert wall.median_eur == 40000.0
+    assert wall.matched_pairs == 20, "the step uses only what the run saw"
     assert all(d.index == pytest.approx(100.0) for d in days)
 
 
-def test_a_lasting_drop_in_coverage_is_absorbed_rather_than_freezing_the_chart():
-    """A country taken out of the run is a new normal, not a permanent
-    outage. Measured against a level that no longer exists, every later day
-    would fail the check and the chart would silently stop."""
+def test_sources_on_different_cadences_do_not_sawtooth_the_median():
+    """The CI scrapes AutoScout24 daily; Használtautó moves only on manual
+    runs. On a plain CI day the Hungarian cars used to vanish from the
+    sample, swinging the median ~4% with nobody repricing anything - and
+    swinging it back on the next manual run."""
+    model_of: dict[str, str] = {}
+    snaps: list = []
+    for day in range(1, 7):
+        snaps += _day(model_of, day, 20, 34000.0)  # scraped daily
+    for label, day in (("a", 1), ("b", 6)):  # scraped only on manual-run days
+        for i in range(20):
+            model_of[f"hu{i}"] = "model_y"
+            snaps.append(_snap(f"hu{i}", day, 38000.0))
+        del label
+
+    days = market_history(snaps, model_of=model_of)
+    assert [d.n for d in days] == [40] * 6, "believed on sale, not observed today"
+    assert all(d.median_eur == 36000.0 for d in days), "no sawtooth"
+    assert all(d.index == pytest.approx(100.0) for d in days)
+
+
+def test_a_real_move_survives_a_day_with_no_overlap():
+    """The index base only advances when a step was measured. Advancing it
+    regardless lost real moves: a fleet repriced 10% across a day of
+    one-day visitors came back with the index still at 100."""
+    model_of = {f"c{i}": "model_y" for i in range(10)} | {f"x{i}": "model_y" for i in range(6)}
+    snaps = (
+        [_snap(f"c{i}", 1, 40000.0) for i in range(10)]
+        + [_snap(f"x{i}", 2, 40000.0) for i in range(6)]
+        + [_snap(f"c{i}", 3, 36000.0) for i in range(10)]
+    )
+    days = market_history(snaps, model_of=model_of)
+    assert [round(d.index, 2) for d in days] == [100.0, 100.0, 90.0]
+    assert [d.matched_pairs for d in days] == [0, 0, 10]
+
+
+def test_a_lasting_drop_in_coverage_becomes_the_new_normal():
+    """A country taken out of the run: its cars' alive ranges end, the
+    carried set shrinks to what is really still tracked, and every later
+    day reports at the new level."""
     model_of: dict[str, str] = {}
     snaps: list = []
     for day in range(1, 7):
@@ -229,10 +270,10 @@ def test_a_lasting_drop_in_coverage_is_absorbed_rather_than_freezing_the_chart()
     for day in range(7, 17):
         snaps += _day(model_of, day, 30, 40000.0)
 
-    reported = [d.on.day for d in market_history(snaps, model_of=model_of)]
-    assert reported[:6] == [1, 2, 3, 4, 5, 6]
-    assert reported[-1] == 16, "reporting must resume at the new level"
-    assert len(reported) > 6
+    days = market_history(snaps, model_of=model_of)
+    assert [d.on.day for d in days] == list(range(1, 17))
+    assert days[-1].n == 30, "the departed cars stop being carried"
+    assert days[0].n == 300
 
 
 def test_an_index_held_for_want_of_overlap_says_so():
