@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal EnableDelayedExpansion
 REM ============================================================
 REM  car-tracker scrape-local -- egykattintasos futtato (Windows)
 REM
@@ -40,19 +40,42 @@ echo  postgresql+psycopg://... alakban.)
 echo.
 set "DBURL="
 set /p DBURL="DATABASE_URL: "
-if not "%DBURL%"=="" goto :save_config
+if defined DBURL goto :save_config
 echo HIBA: nem adtal meg cimet.
 pause
 exit /b 1
 :save_config
->"%CONFIG%" echo %DBURL%
+REM Kesleltetett kiertekeles (!DBURL!), nem %DBURL%: egy & vagy ^ a
+REM jelszoban a sima formaban kettevagta volna az echo parancsot, es fel
+REM URL kerult volna a fajlba.
+>"%CONFIG%" echo(!DBURL!
 echo Elmentve ide: %CONFIG%
 :have_config
 set /p DATABASE_URL=<"%CONFIG%"
-if not "%DATABASE_URL%"=="" goto :run
+if defined DATABASE_URL goto :lock
 echo HIBA: ures a konfiguracios fajl - torold es inditsd ujra: %CONFIG%
 pause
 exit /b 1
+
+REM --- egyszerre csak egy futas ---
+REM A .command parjaban ez mar regota megvan; itt hianyzott, pedig az
+REM utemezett 07:30-as futas + egy kezi dupla kattintas ugyanabba az
+REM adatbazisba irna parhuzamosan. A cmd nem tudja megkerdezni, el-e meg
+REM a zar gazdaja, ezert kor alapjan dontunk: egy 3 oranal regebbi zar
+REM egy osszeomlott futase, es atvesszuk - kulonben egyetlen rossz nap
+REM vegleg megallitana a napi futast.
+:lock
+set "LOCKDIR=%~dp0.scrape-local.lock"
+mkdir "%LOCKDIR%" 2>nul && goto :run
+powershell -NoProfile -Command "if ((Get-Item -LiteralPath '%LOCKDIR%').LastWriteTime -lt (Get-Date).AddHours(-3)) { exit 0 } else { exit 1 }" 2>nul
+if errorlevel 1 goto :lock_busy
+rmdir /s /q "%LOCKDIR%" 2>nul
+mkdir "%LOCKDIR%" 2>nul && goto :run
+:lock_busy
+echo Mar fut egy scrape ebbol a mappabol (zar: %LOCKDIR%).
+echo Ha biztosan nem fut, torold a mappat es inditsd ujra.
+if /I not "%~1"=="auto" pause
+exit /b 0
 
 :run
 REM A csomag "browser" extraja a Playwright Python-oldalat hozza; a nagy
@@ -94,12 +117,17 @@ if /I "%~1"=="auto" goto :done
 schtasks /Query /TN "car-tracker scrape-local" >nul 2>nul
 if not errorlevel 1 goto :done
 echo.
+REM 07:30, nem 07:00: a GitHub-futas 05:00 UTC-kor indul, ami nyari
+REM idoszamitasban pont 07:00 nalunk - ket futas ugyanabba az adatbazisba
+REM ugyanabban a percben. Fel ora keses ezt megszunteti (a .command
+REM ugyanezert 07:30-ra utemez).
 set "SCHED="
-set /p SCHED="Fusson ezentul minden nap automatikusan 07:00-kor? (i/n): "
+set /p SCHED="Fusson ezentul minden nap automatikusan 07:30-kor? (i/n): "
 if /I not "%SCHED%"=="i" goto :done
-schtasks /Create /F /SC DAILY /ST 07:00 /TN "car-tracker scrape-local" /TR "\"%~f0\" auto"
+schtasks /Create /F /SC DAILY /ST 07:30 /TN "car-tracker scrape-local" /TR "\"%~f0\" auto"
 echo Beallitva. Torles barmikor: schtasks /Delete /TN "car-tracker scrape-local"
 
 :done
+rmdir /s /q "%LOCKDIR%" 2>nul
 if /I not "%~1"=="auto" pause
 endlocal

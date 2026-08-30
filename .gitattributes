@@ -1,0 +1,12 @@
+# A .bat CRLF sorveggel VAN taroolva, es igy is kell maradnia: cmd.exe a
+# goto/call cimkeket LF-only fajlban egyes Windows-verziokon rosszul
+# talalja meg, es a fajl tipikus utja a "nyers letoltes GitHubrol", ami a
+# blob bajtjait valtozatlanul adja. Ezert -text (semmilyen konverzio),
+# NEM eol=crlf: az a blobot LF-re normalizalna, es a nyers letoltes LF-et
+# kapna. A CRLF-et a tests/test_scripts.py orzi, nem a git.
+*.bat -text
+
+# A parja: shell-scriptek maradjanak LF, kulonben a bash a CR-t a parancs
+# reszenek olvassa ("command not found^M").
+*.command text eol=lf
+*.sh text eol=lf

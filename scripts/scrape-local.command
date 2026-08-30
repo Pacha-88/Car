@@ -165,10 +165,21 @@ if [ "$RESULT" -ne 0 ] && grep -q "hard block page" "$LOG" 2>/dev/null && [ -x "
     RETRY_LOG="$SCRIPT_DIR/scrape-local-retry.log"
     if [ -n "$CDP_SOURCE" ]; then
       uv tool run --from "$FROM_SPEC" car-tracker scrape-local --source "$CDP_SOURCE" 2>&1 | tee "$RETRY_LOG"
+      RESULT=${PIPESTATUS[0]}
+      # Az ujraprobalas CSAK a blokkolt forrast futtatta. Ha a fo futasban
+      # MASIK forras is hibazott, a sikeres ujraprobalas nem mondhatja,
+      # hogy "minden forras lefutott" - az a hiba meg mindig ott van.
+      if [ "$RESULT" -eq 0 ] && grep "^FAILED" "$LOG" 2>/dev/null | grep -qv "FAILED $CDP_SOURCE/"; then
+        echo
+        echo "A blokkolt forrás ($CDP_SOURCE) most lefutott, de a fő futásban"
+        echo "másik forrás is hibázott — annak a hibája továbbra is áll:"
+        grep "^FAILED" "$LOG" | grep -v "FAILED $CDP_SOURCE/" | head -5
+        RESULT=1
+      fi
     else
       uv tool run --from "$FROM_SPEC" car-tracker scrape-local 2>&1 | tee "$RETRY_LOG"
+      RESULT=${PIPESTATUS[0]}
     fi
-    RESULT=${PIPESTATUS[0]}
     echo
     echo "A Chrome-ablakot most már bezárhatod (távoli debuggolással fut,"
     echo "ne hagyd nyitva feleslegesen)."
