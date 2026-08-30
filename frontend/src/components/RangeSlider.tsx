@@ -16,6 +16,15 @@ export function RangeSlider({ label, min, max, value, onChange, formatValue, ste
   const range = Math.max(max - min, 1);
   const loPct = ((lo - min) / range) * 100;
   const hiPct = ((hi - min) / range) * 100;
+  // Which input is on top decides which thumb the mouse can grab when the
+  // two overlap. DOM order puts hi above, which dies in one reachable
+  // corner: drag the min handle to the far end and both thumbs stack at
+  // max - the grabbable one is hi, clamped against lo, and lo is buried,
+  // so no mouse drag can ever move the slider again (reproduced; only
+  // Reset all or the keyboard recovered it). When the pair sits in the
+  // upper half of the track, lo goes on top instead - at a cluster the
+  // reachable thumb is then always the one with room to move.
+  const loOnTop = (lo + hi) / 2 > (min + max) / 2;
 
   return (
     <div className="w-full min-w-[190px] max-w-[260px] flex-1">
@@ -37,11 +46,13 @@ export function RangeSlider({ label, min, max, value, onChange, formatValue, ste
           max={max}
           step={step}
           value={lo}
+          aria-label={`${label} minimum`}
           onChange={(e) => {
             const next = Math.min(Number(e.target.value), hi);
             onChange([next, hi]);
           }}
           className="range-thumb-input absolute inset-x-0 top-0 h-4 w-full"
+          style={loOnTop ? { zIndex: 2 } : undefined}
         />
         <input
           type="range"
@@ -49,6 +60,7 @@ export function RangeSlider({ label, min, max, value, onChange, formatValue, ste
           max={max}
           step={step}
           value={hi}
+          aria-label={`${label} maximum`}
           onChange={(e) => {
             const next = Math.max(Number(e.target.value), lo);
             onChange([lo, next]);
