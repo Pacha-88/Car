@@ -181,3 +181,45 @@ def test_a_beyond_the_end_page_cannot_vouch_for_itself(monkeypatch):
     listings = source.fetch_listings(model="model_y", country="DE")
     assert listings, "ends cleanly - the echo is not evidence"
     assert source.fetched == [1, 2]
+
+
+# --- an offer this parser cannot even identify -----------------------------
+
+
+def test_an_article_without_an_ad_id_is_skipped_not_stored_anonymously(articles):
+    """An empty id would store as a bare "kleinanzeigen:", one row shared by
+    every such card, each overwriting the last."""
+    stripped = articles[0].replace('data-adid="', 'data-xadid="')
+    assert parse_item(stripped, model="model_y") is None
+
+
+def test_a_page_of_unreadable_offers_is_not_a_clean_empty_market():
+    """"ok, 0 listings" from a page full of offers authorises retirement -
+    the exact failure tesla.py and autoscout24.py already refuse. Wanted
+    ads ("Gesuch") do not count: a page of only those is genuinely empty."""
+
+    class _ShapeChanged(KleinanzeigenSource):
+        def __init__(self):
+            pass
+
+        def fetch_raw_page(self, *, model: str, page: int = 1) -> str:
+            # Articles the regex finds, but with the ad-id attribute renamed
+            # the way a markup change would.
+            return FIXTURE_HTML.replace("data-adid=", "data-xadid=")
+
+    with pytest.raises(RuntimeError, match="none could be read"):
+        _ShapeChanged().fetch_listings(model="model_y", country="DE")
+
+
+def test_a_page_of_only_wanted_ads_is_a_genuinely_empty_page():
+    gesuch = '<article class="aditem" data-adid="1" data-href="/x"><span class="simpletag">Gesuch</span></article>'
+    html = gesuch * 3
+
+    class _OnlyGesuch(KleinanzeigenSource):
+        def __init__(self):
+            pass
+
+        def fetch_raw_page(self, *, model: str, page: int = 1) -> str:
+            return html if page == 1 else "<html></html>"
+
+    assert _OnlyGesuch().fetch_listings(model="model_y", country="DE") == []

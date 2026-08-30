@@ -280,3 +280,11 @@ def test_a_missing_path_is_rebuilt_too():
 def test_parse_item_carries_the_rebuilt_url_through():
     listing = parse_item({"id": "eaa83b9c-ea2f-4cd7-a277-25c7bd909ebe", "url": "/offers/x"}, model="model_y")
     assert listing.url == "https://www.autoscout24.com/offers/eaa83b9c-ea2f-4cd7-a277-25c7bd909ebe"
+
+
+def test_a_card_without_an_id_is_refused_not_stored_anonymously():
+    """An empty id would collapse to a bare "autoscout24:" shared by every
+    such card, each overwriting the last."""
+    for item in ({}, {"id": None}, {"id": ""}):
+        with pytest.raises(ValueError, match="no id"):
+            parse_item(item, model="model_y")

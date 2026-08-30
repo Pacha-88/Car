@@ -428,3 +428,22 @@ def test_a_market_where_nothing_parses_is_not_a_clean_empty_market(monkeypatch):
 
     with pytest.raises(RuntimeError, match="none could be read"):
         _AllRotten().fetch_listings(model="model_y", country="AT")
+
+
+def test_a_null_price_is_a_gap_not_a_crash():
+    """`.get("Price", 0)` only defaults when the key is ABSENT; a JSON API
+    says "no price" with null just as readily, and float(None) threw the
+    whole card away. Zero is the shared "no price recorded" convention -
+    every reader downstream treats it as a gap, not a price."""
+    for absent_or_null in ({"VIN": "X9"}, {"VIN": "X9", "Price": None}):
+        listing = parse_item(absent_or_null, model="model_3", country="HU")
+        assert listing.price_original == 0.0
+
+
+def test_a_card_without_a_vin_is_refused_not_stored_anonymously():
+    """An empty VIN would collapse the id to a bare "tesla:" shared by every
+    such card, each overwriting the last. Raising hands it to the caller's
+    per-item guard, which reports it and keeps the page."""
+    for item in ({"Price": 30000}, {"VIN": None, "Price": 30000}, {"VIN": "", "Price": 30000}):
+        with pytest.raises(ValueError, match="VIN"):
+            parse_item(item, model="model_3", country="HU")

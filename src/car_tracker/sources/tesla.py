@@ -432,7 +432,15 @@ def _power_kw(item: dict) -> int | None:
 
 def parse_item(item: dict, *, model: str, country: str) -> RawListing:
     """Field mapping verified against a real response (see module docstring)."""
-    vin = item.get("VIN", "")
+    # `or`, not a .get default - the default only applies when the key is
+    # ABSENT, and a JSON API says "no VIN" with null as readily as by
+    # omission. An empty VIN must not pass either: the id would collapse to
+    # a bare "tesla:" shared by every such card, each overwriting the last.
+    # Raising hands the card to the caller's per-item guard, which reports
+    # it and keeps the rest of the page.
+    vin = item.get("VIN") or ""
+    if not vin:
+        raise ValueError("card carries no VIN to identify it by")
     odometer = item.get("Odometer")
     unit = item.get("OdometerTypeShort") or item.get("OdometerType") or "km"
     if odometer is not None and str(unit).lower().startswith("mi"):
@@ -446,7 +454,10 @@ def parse_item(item: dict, *, model: str, country: str) -> RawListing:
         model=model,
         country=country,
         url=listing_url(model, country, vin),
-        price_original=float(item.get("Price", 0)),
+        # `or 0`, again not a .get default: "Price": null crashed float().
+        # Zero is the shared "no price recorded" convention - every reader
+        # (badge, index, export card) already treats it as a gap, not a price.
+        price_original=float(item.get("Price") or 0),
         currency_original=item.get("CurrencyCode") or market_currency(country),
         mileage_km=odometer,
         model_year=item.get("Year"),

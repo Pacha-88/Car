@@ -117,7 +117,25 @@ class KleinanzeigenSource(Source):
             advertised = [int(n) for n in _PAGE_LINK_RE.findall(html)]
             if advertised:
                 highest_advertised = max(highest_advertised, *advertised)
-            listings.extend(parsed for a in articles if (parsed := parse_item(a, model=model)) is not None)
+            kept = 0
+            offers = 0
+            for article in articles:
+                parsed = parse_item(article, model=model)
+                if parsed is not None:
+                    listings.append(parsed)
+                    kept += 1
+                elif "Gesuch" not in article:
+                    # An offer (not a wanted ad) this parser could not read.
+                    offers += 1
+            if offers and not kept:
+                # A page full of offers and not one readable: the site's
+                # shape has moved. Returning them as "no ads" would let
+                # retirement mark every Kleinanzeigen car sold - the exact
+                # failure tesla.py and autoscout24.py already refuse.
+                reason = f"page {page} carried {offers} offer(s) and none could be read - page shape changed?"
+                if listings:
+                    raise PartialResults(listings, reason)
+                raise RuntimeError(reason)
             page += 1
             if max_pages is None or page <= max_pages:
                 time.sleep(REQUEST_DELAY_SECONDS)
@@ -146,6 +164,13 @@ def parse_item(article_html: str, *, model: str) -> RawListing | None:
 
     adid = _ADID_RE.search(article_html)
     href = _HREF_RE.search(article_html)
+    if not adid or not href:
+        # Without an id the row would store as a bare "kleinanzeigen:",
+        # shared by every such card, each overwriting the last; without a
+        # link the card is a dead click. Either way this article is
+        # unreadable - and the page guard below decides whether that is
+        # one odd card or the site's shape having moved.
+        return None
     title = _TITLE_RE.search(article_html)
     location = _LOCATION_RE.search(article_html)
     image = _IMAGE_RE.search(article_html)
@@ -154,10 +179,10 @@ def parse_item(article_html: str, *, model: str) -> RawListing | None:
 
     return RawListing(
         source="kleinanzeigen",
-        source_listing_id=adid.group(1) if adid else "",
+        source_listing_id=adid.group(1),
         model=model,
         country="DE",
-        url=("https://www.kleinanzeigen.de" + href.group(1)) if href else "",
+        url="https://www.kleinanzeigen.de" + href.group(1),
         price_original=price,
         currency_original="EUR",
         mileage_km=_parse_mileage(tags),

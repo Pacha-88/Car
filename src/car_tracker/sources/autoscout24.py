@@ -197,6 +197,11 @@ def parse_item(item: dict, *, model: str) -> RawListing:
     # crashed the parser outright on a null - and one bad card here takes
     # the whole combo with it, since the parse happens outside the loop's
     # page guard. Tesla's per-market shape drift was the same lesson.
+    if not item.get("id"):
+        # An empty id would store as a bare "autoscout24:", one row shared
+        # by every such card. Raising hands it to the loop's per-item
+        # guard, which counts it and keeps the page.
+        raise ValueError("card carries no id to identify it by")
     details = {d["iconName"]: d["data"] for d in (item.get("vehicleDetails") or []) if isinstance(d, dict)}
     first_registration = _parse_month_year(details.get("calendar"))
     country = (item.get("location") or {}).get("countryCode") or ""
