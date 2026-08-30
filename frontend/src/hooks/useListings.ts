@@ -7,6 +7,8 @@ interface ListingsState {
   latestScrapeDate: string | null;
   /** The scrape's exact moment, UTC-marked; null on an older export. */
   latestScrapeAt: string | null;
+  /** Per-source last-scrape moments; empty on an older export. */
+  sourceScrapedAt: Record<string, string>;
   hufPerEur: number | null;
   /** One row per day per model, oldest first. Empty until a run has
    * written one - an export from before this field existed has none. */
@@ -23,6 +25,7 @@ const INITIAL_STATE: ListingsState = {
   generatedAt: null,
   latestScrapeDate: null,
   latestScrapeAt: null,
+  sourceScrapedAt: {},
   hufPerEur: null,
   marketHistory: [],
   saleTimes: [],
@@ -59,6 +62,7 @@ export function useListings(): ListingsState {
           generatedAt: payload.generatedAt,
           latestScrapeDate: payload.latestScrapeDate,
           latestScrapeAt: payload.latestScrapeAt ?? null,
+          sourceScrapedAt: payload.sourceScrapedAt ?? {},
           // An export written before this field existed simply has no rate.
           hufPerEur: payload.hufPerEur ?? null,
           marketHistory: payload.marketHistory ?? [],

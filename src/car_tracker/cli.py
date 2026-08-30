@@ -541,6 +541,22 @@ def cmd_export(args: argparse.Namespace) -> None:
         # days-to-sale medians are made of nothing else.
         all_listings = list(session.execute(select(Listing)).scalars())
         model_of = {listing.id: listing.model for listing in all_listings}
+        source_of = {listing.id: listing.source for listing in all_listings}
+
+        # When each SOURCE last delivered a snapshot. The headline stamp is
+        # the newest of any source, which quietly overstates the freshness
+        # of the two datacenter-blocked sites (Használtautó.hu, Tesla.com):
+        # those only move when someone runs scrape-local from home, and the
+        # dashboard should say so per source rather than borrow the CI's
+        # clock for them.
+        source_scraped_at: dict[str, datetime] = {}
+        for snapshot in all_snapshots:
+            source = source_of.get(snapshot.listing_id)
+            if source is None:
+                continue
+            seen = source_scraped_at.get(source)
+            if seen is None or snapshot.observed_at > seen:
+                source_scraped_at[source] = snapshot.observed_at
 
         # Only listings that ever recorded a usable price can be a sale -
         # the retirement of a 1 EUR referral link is not a car selling.
@@ -651,6 +667,11 @@ def cmd_export(args: argparse.Namespace) -> None:
         "latestScrapeAt": latest_observed_at.replace(microsecond=0).isoformat() + "Z"
         if latest_observed_at
         else None,
+        # Per-source versions of the same moment, same UTC marking.
+        "sourceScrapedAt": {
+            source: seen.replace(microsecond=0).isoformat() + "Z"
+            for source, seen in sorted(source_scraped_at.items())
+        },
         # Prices are stored in EUR; this lets the dashboard show them in
         # forints without every listing carrying a converted copy that
         # would go stale the moment the rate moved.

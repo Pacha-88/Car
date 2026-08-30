@@ -46,6 +46,9 @@ export interface ExportPayload {
   /** The same moment to the second, UTC-marked ("...Z"). Optional - an
    * export written before this field has only the date. */
   latestScrapeAt?: string | null;
+  /** Per-source versions of the same moment - the headline stamp is the
+   * newest of ANY source, which overstates the two home-run-only sites. */
+  sourceScrapedAt?: Record<string, string> | null;
   /** Forints per euro at the last scrape. null until a run has stored a
    * rate, in which case the dashboard stays in euros rather than guessing. */
   hufPerEur: number | null;

@@ -15,7 +15,7 @@ import { isPriceDrop, priceChange } from "./lib/priceHistory";
 import { ageBucketIndex, ageInYears, computeDepreciationCurve } from "./lib/depreciation";
 import { applyFilters, defaultFilterState, type FilterState } from "./lib/filters";
 import { linearSlope } from "./lib/trend";
-import type { Listing, Model } from "./types";
+import { SOURCE_LABELS, type Listing, type Model } from "./types";
 
 const DEAL_TIERS_KEPT = new Set(["great", "good"]);
 
@@ -55,6 +55,33 @@ function budapestStamp(iso: string): { date: string; time: string; zone: string 
     time: `${get("hour")}:${get("minute")}`,
     zone: get("timeZoneName").includes("+02") ? "CEST" : "CET",
   };
+}
+
+/** The two sources a datacenter cannot reach refresh only when
+ * scrape-local runs from a home connection, so the headline stamp - the
+ * newest of ANY source - quietly overstates their freshness. This names
+ * their own clocks, one quiet line under it. */
+const HOME_RUN_SOURCES = ["hasznaltauto", "tesla"] as const;
+
+function SourceFreshness({ sourceScrapedAt }: { sourceScrapedAt: Record<string, string> }) {
+  const entries = HOME_RUN_SOURCES.map((source) => {
+    const iso = sourceScrapedAt[source];
+    const stamp = iso ? budapestStamp(iso) : null;
+    return stamp ? { source, stamp } : null;
+  }).filter((e): e is { source: (typeof HOME_RUN_SOURCES)[number]; stamp: NonNullable<ReturnType<typeof budapestStamp>> } => e !== null);
+  if (entries.length === 0) return null;
+  return (
+    <p
+      className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-muted opacity-75"
+      title="These two sites block datacenter traffic, so they only refresh when scrape-local runs from a home connection - the line above shows the newest scrape of any source."
+    >
+      {entries.map(({ source, stamp }) => (
+        <span key={source}>
+          {SOURCE_LABELS[source] ?? source} {stamp.date} · {stamp.time} {stamp.zone}
+        </span>
+      ))}
+    </p>
+  );
 }
 
 function ScrapeFreshness({ date, at }: { date: string; at: string | null }) {
@@ -185,7 +212,7 @@ export default function App() {
 }
 
 function Dashboard({ data }: { data: ReturnType<typeof useListings> }) {
-  const { listings, latestScrapeDate, latestScrapeAt, marketHistory, loading, error } = data;
+  const { listings, latestScrapeDate, latestScrapeAt, sourceScrapedAt, marketHistory, loading, error } = data;
   const { watchlist, toggle: toggleWatchlist } = useWatchlist();
   const [model, setModel] = useState<Model>("model_y");
   const [filters, setFilters] = useState<FilterState | null>(null);
@@ -340,6 +367,7 @@ function Dashboard({ data }: { data: ReturnType<typeof useListings> }) {
               Tesla {model === "model_y" ? "Model Y" : "Model 3"}
             </h1>
             {latestScrapeDate && <ScrapeFreshness date={latestScrapeDate} at={latestScrapeAt} />}
+            <SourceFreshness sourceScrapedAt={sourceScrapedAt} />
           </div>
           <div className="flex items-center gap-2">
             <Segmented>

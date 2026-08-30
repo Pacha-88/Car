@@ -1297,3 +1297,4 @@ def test_the_export_carries_the_scrape_moment_marked_utc(isolated_db, tmp_path):
     payload = json.loads(out.read_text())
     assert payload["latestScrapeAt"] == "2026-08-29T08:23:59Z"
     assert payload["latestScrapeDate"] == "2026-08-29"
+    assert payload["sourceScrapedAt"] == {"autoscout24": "2026-08-29T08:23:59Z"}
