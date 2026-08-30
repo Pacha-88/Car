@@ -1298,3 +1298,40 @@ def test_the_export_carries_the_scrape_moment_marked_utc(isolated_db, tmp_path):
     assert payload["latestScrapeAt"] == "2026-08-29T08:23:59Z"
     assert payload["latestScrapeDate"] == "2026-08-29"
     assert payload["sourceScrapedAt"] == {"autoscout24": "2026-08-29T08:23:59Z"}
+
+
+def test_the_market_history_is_also_sliced_by_registration_year(isolated_db, tmp_path):
+    """The trend panel can narrow to one cohort: per-year rows ride beside
+    the all-years ones, each with its own median and index."""
+    with session_scope(get_engine(isolated_db)) as session:
+        for year, price, count in ((2022, 30_000.0, 6), (2024, 44_000.0, 6)):
+            for i in range(count):
+                listing_id = f"y{year}_{i}"
+                session.add(
+                    Listing(
+                        id=listing_id, source="autoscout24", source_listing_id=listing_id,
+                        model="model_y", country="DE", url="https://example.com",
+                        title_raw="Long Range AWD", first_registration=date(year, 6, 1),
+                        model_year=year, first_seen_at=datetime(2026, 8, 27),
+                        last_seen_at=datetime(2026, 8, 28), is_active=True,
+                    )
+                )
+                for day in (27, 28):
+                    session.add(
+                        ListingSnapshot(
+                            listing_id=listing_id, observed_at=datetime(2026, 8, day, 9),
+                            price_original=price, currency_original="EUR",
+                            price_eur=price, mileage_km=50_000,
+                        )
+                    )
+
+    out = tmp_path / "listings.json"
+    cli.cmd_export(argparse.Namespace(out=str(out)))
+    rows = json.loads(out.read_text())["marketHistory"]
+
+    all_rows = [r for r in rows if "year" not in r]
+    assert {r["medianEur"] for r in all_rows} == {37_000.0}, "the blended median"
+    assert {(r["year"], r["medianEur"]) for r in rows if "year" in r} == {
+        (2022, 30_000.0),
+        (2024, 44_000.0),
+    }, "each cohort keeps its own median"

@@ -34,8 +34,26 @@ interface MarketTrendChartProps {
 export function MarketTrendChart({ history, model }: MarketTrendChartProps) {
   const money = useMoney();
   const [windowDays, setWindowDays] = useState(30);
+  // null = every year together (the rows without a cohort).
+  const [year, setYear] = useState<number | null>(null);
 
-  const forModel = useMemo(() => history.filter((d) => d.model === model), [history, model]);
+  // The years that actually have a cohort series for this model, oldest
+  // first. An export from before the cohorts simply offers no buttons.
+  const years = useMemo(
+    () =>
+      [...new Set(history.filter((d) => d.model === model && d.year != null).map((d) => d.year as number))].sort(),
+    [history, model],
+  );
+
+  const forModel = useMemo(
+    () => history.filter((d) => d.model === model && (d.year ?? null) === year),
+    [history, model, year],
+  );
+
+  // A cohort chosen on one model may not exist on the other.
+  if (year !== null && years.length > 0 && !years.includes(year)) {
+    setYear(null);
+  }
 
   const days = useMemo(() => {
     if (windowDays === 0) return forModel;
@@ -112,25 +130,55 @@ export function MarketTrendChart({ history, model }: MarketTrendChartProps) {
       <div className="min-w-0">
         <h2 className="text-sm font-semibold leading-tight text-primary">Market movement</h2>
         <p className="mt-0.5 text-xs text-muted">
-          Every {model === "model_y" ? "Model Y" : "Model 3"} tracked, sold ones included — not the filters above.
+          Every {year !== null ? `${year}-registered ` : ""}
+          {model === "model_y" ? "Model Y" : "Model 3"} tracked, sold ones included — not the filters above.
         </p>
       </div>
-      <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-surface-2 p-0.5">
-        {WINDOWS.map((w) => (
-          <button
-            key={w.days}
-            type="button"
-            onClick={() => setWindowDays(w.days)}
-            aria-pressed={windowDays === w.days}
-            className={`rounded-[6px] px-2.5 py-1 text-xs font-medium transition-colors ${
-              windowDays === w.days
-                ? "bg-accent text-accent-ink"
-                : "text-secondary hover:bg-surface-3 hover:text-primary"
-            }`}
-          >
-            {w.label}
-          </button>
-        ))}
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        {years.length > 0 && (
+          <div className="inline-flex min-w-0 flex-wrap items-center gap-0.5 rounded-lg border border-border bg-surface-2 p-0.5">
+            <button
+              type="button"
+              onClick={() => setYear(null)}
+              aria-pressed={year === null}
+              className={`rounded-[6px] px-2 py-1 text-xs font-medium transition-colors ${
+                year === null ? "bg-accent text-accent-ink" : "text-secondary hover:bg-surface-3 hover:text-primary"
+              }`}
+            >
+              All years
+            </button>
+            {years.map((y) => (
+              <button
+                key={y}
+                type="button"
+                onClick={() => setYear(y)}
+                aria-pressed={year === y}
+                className={`numeral rounded-[6px] px-2 py-1 text-xs font-medium transition-colors ${
+                  year === y ? "bg-accent text-accent-ink" : "text-secondary hover:bg-surface-3 hover:text-primary"
+                }`}
+              >
+                {y}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-surface-2 p-0.5">
+          {WINDOWS.map((w) => (
+            <button
+              key={w.days}
+              type="button"
+              onClick={() => setWindowDays(w.days)}
+              aria-pressed={windowDays === w.days}
+              className={`rounded-[6px] px-2.5 py-1 text-xs font-medium transition-colors ${
+                windowDays === w.days
+                  ? "bg-accent text-accent-ink"
+                  : "text-secondary hover:bg-surface-3 hover:text-primary"
+              }`}
+            >
+              {w.label}
+            </button>
+          ))}
+        </div>
       </div>
     </header>
   );

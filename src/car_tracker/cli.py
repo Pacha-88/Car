@@ -655,6 +655,26 @@ def cmd_export(args: argparse.Namespace) -> None:
 
         market_days = market_history(all_snapshots, model_of=model_of)
 
+        # The same series again, sliced by registration year, so the trend
+        # panel can answer "what did 2023 cars do?" and not just "what did
+        # Model Y do?". market_history groups by whatever its mapping
+        # values say, so a composite "model|year" key reuses it whole -
+        # medians, carry-forward and the matched-pair index all fall out
+        # per cohort, and the index is arguably MORE honest here, since a
+        # cohort cannot shift its own age mix. Cars whose year is unknown
+        # sit these slices out; thin cohorts drop out via MIN_DAY_SAMPLE
+        # exactly as thin days do.
+        year_of = {
+            listing.id: (listing.first_registration.year if listing.first_registration else listing.model_year)
+            for listing in all_listings
+        }
+        year_group_of = {
+            listing_id: f"{model}|{year_of[listing_id]}"
+            for listing_id, model in model_of.items()
+            if year_of.get(listing_id) is not None
+        }
+        market_days_by_year = market_history(all_snapshots, model_of=year_group_of)
+
     payload = {
         "generatedAt": now.isoformat(),
         "latestScrapeDate": latest_scrape_date.isoformat() if latest_scrape_date else None,
@@ -695,6 +715,20 @@ def cmd_export(args: argparse.Namespace) -> None:
                 "matchedPairs": day.matched_pairs,
             }
             for day in market_days
+        ]
+        + [
+            {
+                "date": day.on.isoformat(),
+                "model": day.model.split("|")[0],
+                "year": int(day.model.split("|")[1]),
+                "medianEur": day.median_eur,
+                "p25Eur": day.p25_eur,
+                "p75Eur": day.p75_eur,
+                "n": day.n,
+                "index": day.index,
+                "matchedPairs": day.matched_pairs,
+            }
+            for day in market_days_by_year
         ],
         # Median days a car sits before its ad disappears, per variant and
         # per model, counting only sales whose ARRIVAL was witnessed too -

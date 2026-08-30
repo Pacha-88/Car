@@ -109,7 +109,8 @@ def test_five_days_of_the_real_pipeline(isolated_db, tmp_path):
     assert by_id["arrival"]["isNew"] is True
 
     # Market history: five days, and the sold car counts while it lasted.
-    days = [d for d in payload["marketHistory"] if d["model"] == "model_y"]
+    # The all-years rows; per-year cohort rows ride beside them.
+    days = [d for d in payload["marketHistory"] if d["model"] == "model_y" and "year" not in d]
     assert [d["date"] for d in days] == [at(i).date().isoformat() for i in range(5)]
     assert days[0]["n"] == 33  # 30 anchors + cutter + sold + blip
     assert days[3]["n"] == 32  # the sold car is out; the blip is back

@@ -71,6 +71,9 @@ export interface SaleTime {
 export interface MarketDay {
   date: string; // ISO date
   model: Model;
+  /** Absent/null on the all-years rows; set on per-cohort rows, which let
+   * the trend panel narrow to one registration year. */
+  year?: number | null;
   medianEur: number;
   p25Eur: number;
   p75Eur: number;
