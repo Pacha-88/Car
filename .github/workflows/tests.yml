@@ -1,0 +1,58 @@
+name: Tests
+
+# The safety net the deploy pipeline assumes but never held up: 461 tests
+# and a typecheck existed with no workflow running them, so a broken commit
+# deployed exactly as smoothly as a good one. scrape-and-deploy.yml stays
+# a pure data pipeline; this runs on every push and pull request, needs no
+# secrets (the backend tests run against local SQLite), and is what should
+# be green before trusting a branch.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          uv python install 3.12
+          uv sync --locked
+
+      - name: Run the test suite
+        run: uv run pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Lint
+        working-directory: frontend
+        run: npm run lint
+
+      # `build` runs `tsc -b` first, so this is the typecheck and the
+      # production build in one - and it must succeed without a
+      # listings.json, exactly as a fresh clone builds.
+      - name: Typecheck and build
+        working-directory: frontend
+        run: npm run build
