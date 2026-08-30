@@ -491,6 +491,25 @@ def test_a_partial_combo_does_not_fail_the_run(isolated_db, monkeypatch, capsys)
     assert "page 13 failed" in output
 
 
+def test_manual_single_combo_scrape_also_stores_a_partial_fetch(isolated_db, monkeypatch, capsys):
+    """PartialResults' contract - what was fetched must still be stored -
+    binds every caller. cmd_scrape used to let the exception fly, so the
+    manual command dropped twelve pages of real cars over a challenge on
+    page thirteen while cmd_scrape_all kept them."""
+    monkeypatch.setattr(cli, "SOURCES", {"fake_ok": _FakePartialSource})
+
+    cli.cmd_scrape(
+        argparse.Namespace(source="fake_ok", model="model_y", country="DE", max_pages=None, huf_rate=None)
+    )
+
+    with session_scope(get_engine(isolated_db)) as session:
+        stored = [listing.id for listing in session.execute(select(Listing)).scalars()]
+    assert stored == ["fake_ok:model_y-DE"]
+    output = capsys.readouterr().out
+    assert "partial fake_ok/model_y/DE" in output
+    assert "page 13 failed" in output
+
+
 def _seed_listings(db_url: str, *, source: str, count: int, seen_at) -> None:
     with session_scope(get_engine(db_url)) as session:
         for i in range(count):

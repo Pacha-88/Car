@@ -53,6 +53,7 @@ import atexit
 import os
 import re
 import time
+from html import unescape
 from pathlib import Path
 
 # curl_cffi's Chrome TLS profile. Keep in step with sources/http.py's
@@ -564,5 +565,12 @@ def fetch_json(url: str, *, accept_language: str = "en-US,en;q=0.9", timeout: fl
         return stripped
     match = re.search(r"<pre[^>]*>(.*?)</pre>", body, re.S)
     if match:
-        return re.sub(r"<[^>]+>", "", match.group(1))
+        # The browser did not just wrap the JSON, it serialized it as HTML
+        # text - every & < > in the data came back as &amp; &lt; &gt;.
+        # Stripping the tags alone left those entities inside string values,
+        # so a trim reading `Wheels & Tires` was stored as `Wheels &amp;
+        # Tires`: still valid JSON, silently wrong data. Tags first, then
+        # entities - a real "<" in the data arrives as &lt; and survives,
+        # while everything tag-shaped is genuine markup.
+        return unescape(re.sub(r"<[^>]+>", "", match.group(1)))
     return body

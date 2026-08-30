@@ -111,17 +111,36 @@ def cmd_scrape(args: argparse.Namespace) -> None:
     if args.source not in SOURCES:
         raise SystemExit(f"unknown source {args.source!r}, expected one of {sorted(SOURCES)}")
 
+    # Rates before the fetch: they can fail on their own (the ECB down, for
+    # a HUF combo), and failing here costs nothing, while failing after the
+    # fetch throws away every page a Cloudflare-paced fifteen-page walk had
+    # just earned.
+    rates_to_eur = _rates_for_country(args.country, huf_rate_override=args.huf_rate)
+
+    # PartialResults exists so half a fetch is still stored - _run_scrape
+    # honours that, and this manual single-combo command used to let the
+    # same exception fly instead: a challenge on page 13 of 15 printed a
+    # traceback and dropped the twelve pages of real cars already in hand.
+    partial_reason: str | None = None
     source_cls = SOURCES[args.source]
     with source_cls() as source:
-        raw_listings = source.fetch_listings(model=args.model, country=args.country, max_pages=args.max_pages)
-
-    rates_to_eur = _rates_for_country(args.country, huf_rate_override=args.huf_rate)
+        try:
+            raw_listings = source.fetch_listings(model=args.model, country=args.country, max_pages=args.max_pages)
+        except PartialResults as partial:
+            raw_listings, partial_reason = partial.listings, partial.reason
 
     now = utc_now()
     with session_scope() as session:
         for raw in raw_listings:
             _upsert(session, raw, rates_to_eur=rates_to_eur, observed_at=now)
-    print(f"stored {len(raw_listings)} listings from {args.source}/{args.model}/{args.country}")
+    combo = f"{args.source}/{args.model}/{args.country}"
+    if partial_reason is None:
+        print(f"stored {len(raw_listings)} listings from {combo}")
+    else:
+        # Same verdict _run_scrape gives a partial combo: the stored prices
+        # are real, so the run is not a failure - but it must not read as a
+        # complete picture either.
+        print(f"partial {combo}: stored {len(raw_listings)} listings, but {partial_reason}")
 
 
 def _store_batch(raw_listings: list[RawListing], *, rates_to_eur: dict[str, float], observed_at: datetime) -> None:

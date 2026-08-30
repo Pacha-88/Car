@@ -9,6 +9,8 @@ Cloudflare interstitial as if it were listings.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from car_tracker.sources import fetch
@@ -100,6 +102,24 @@ def test_json_is_unwrapped_from_the_browser_pre_tag(monkeypatch):
         lambda url, **kw: (200, '<html><body><pre>{"results": [1]}</pre></body></html>'),
     )
     assert fetch_json("https://example.com") == '{"results": [1]}'
+
+
+def test_json_from_the_browser_gets_its_entities_back(monkeypatch):
+    """The browser serializes the JSON as HTML text on the way into that
+    <pre>, so every & < > in the data arrives as an entity. Stripping only
+    the tags shipped `Wheels &amp; Tires` into the database as a trim name -
+    valid JSON, silently wrong data."""
+    monkeypatch.setattr(fetch, "_fetch_with_impersonation", lambda url, **kw: None)
+    # What Chrome actually serializes: & < > become entities, while the
+    # JSON's own \" escape passes through a text node untouched.
+    monkeypatch.setattr(
+        fetch,
+        "_fetch_with_browser",
+        lambda url, **kw: (200, '<html><body><pre>{"trim": "Wheels &amp; Tires, 19\\" &lt;OEM&gt;"}</pre></body></html>'),
+    )
+    unwrapped = fetch_json("https://example.com")
+    assert unwrapped == '{"trim": "Wheels & Tires, 19\\" <OEM>"}'
+    assert json.loads(unwrapped) == {"trim": 'Wheels & Tires, 19" <OEM>'}
 
 
 def test_browser_stage_reports_how_to_install_it_when_absent(monkeypatch):
