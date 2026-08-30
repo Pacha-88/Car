@@ -642,6 +642,15 @@ def cmd_export(args: argparse.Namespace) -> None:
     payload = {
         "generatedAt": now.isoformat(),
         "latestScrapeDate": latest_scrape_date.isoformat() if latest_scrape_date else None,
+        # The same moment to the second, explicitly marked UTC ("Z") - the
+        # database stores naive UTC, and shipping it bare would let every
+        # reader parse it as their own local time. The dashboard renders it
+        # in the market's own zone (Europe/Budapest). The date-only field
+        # above stays: day-granular readers (freshness tone, days-listed,
+        # the sparkline's end) key off the scrape DAY on purpose.
+        "latestScrapeAt": latest_observed_at.replace(microsecond=0).isoformat() + "Z"
+        if latest_observed_at
+        else None,
         # Prices are stored in EUR; this lets the dashboard show them in
         # forints without every listing carrying a converted copy that
         # would go stale the moment the rate moved.

@@ -30,14 +30,43 @@ const REFERENCE_KM_FOR_EXCLUSION = 60_000;
 // clock call inside render is both impure and pointless here.
 const LOADED_AT = Date.now();
 
-function ScrapeFreshness({ date }: { date: string }) {
+/** The scrape moment in the market's own clock, whoever is reading.
+ *
+ * Europe/Budapest rather than the browser's zone: the pipeline, the
+ * listings and the reader's question ("did it run this morning?") all
+ * live in Central European time, and Intl carries the CET/CEST switch so
+ * the label never claims the wrong hour in either half of the year. */
+function budapestStamp(iso: string): { date: string; time: string; zone: string } | null {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return null;
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Budapest",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZoneName: "longOffset",
+  }).formatToParts(at);
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  return {
+    date: `${get("year")}-${get("month")}-${get("day")}`,
+    time: `${get("hour")}:${get("minute")}`,
+    zone: get("timeZoneName").includes("+02") ? "CEST" : "CET",
+  };
+}
+
+function ScrapeFreshness({ date, at }: { date: string; at: string | null }) {
   const days = Math.floor((LOADED_AT - new Date(`${date}T12:00:00`).getTime()) / 86_400_000);
   const tone = days <= 1 ? "bg-status-good" : days <= 7 ? "bg-status-warning" : "bg-status-critical";
   const age = days <= 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`;
+  // An export from before the timestamp existed still has the date.
+  const stamp = at ? budapestStamp(at) : null;
   return (
     <p className="mt-1.5 flex items-center gap-1.5 text-xs text-muted" title={`Scraped ${age}`}>
       <span className={`h-1.5 w-1.5 rounded-full ${tone}`} aria-hidden />
-      Last scraped {date}
+      Last scraped {stamp ? `${stamp.date} · ${stamp.time} ${stamp.zone}` : date}
       {days > 1 && <span>· {age}</span>}
     </p>
   );
@@ -125,7 +154,7 @@ export default function App() {
 }
 
 function Dashboard({ data }: { data: ReturnType<typeof useListings> }) {
-  const { listings, latestScrapeDate, marketHistory, loading, error } = data;
+  const { listings, latestScrapeDate, latestScrapeAt, marketHistory, loading, error } = data;
   const { watchlist, toggle: toggleWatchlist } = useWatchlist();
   const [model, setModel] = useState<Model>("model_y");
   const [filters, setFilters] = useState<FilterState | null>(null);
@@ -279,7 +308,7 @@ function Dashboard({ data }: { data: ReturnType<typeof useListings> }) {
             <h1 className="mt-1.5 text-[22px] font-semibold leading-none tracking-tight text-primary">
               Tesla {model === "model_y" ? "Model Y" : "Model 3"}
             </h1>
-            {latestScrapeDate && <ScrapeFreshness date={latestScrapeDate} />}
+            {latestScrapeDate && <ScrapeFreshness date={latestScrapeDate} at={latestScrapeAt} />}
           </div>
           <div className="flex items-center gap-2">
             <Segmented>

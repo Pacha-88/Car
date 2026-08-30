@@ -1272,3 +1272,28 @@ def test_the_export_carries_witnessed_sale_times(isolated_db, tmp_path):
         {"model": "model_y", "variant": None, "medianDays": 12.0, "n": 5},
         {"model": "model_y", "variant": "long_range_awd", "medianDays": 12.0, "n": 5},
     ]
+
+
+def test_the_export_carries_the_scrape_moment_marked_utc(isolated_db, tmp_path):
+    """The database stores naive UTC; shipped bare, every browser would
+    parse the stamp as its own local time. The Z suffix pins it."""
+    with session_scope(get_engine(isolated_db)) as session:
+        session.add(
+            Listing(
+                id="autoscout24:t", source="autoscout24", source_listing_id="t",
+                model="model_y", country="DE", url="https://example.com",
+                title_raw="Long Range AWD", first_seen_at=datetime(2026, 8, 29, 8, 23, 59),
+                last_seen_at=datetime(2026, 8, 29, 8, 23, 59), is_active=True,
+            )
+        )
+        session.add(
+            ListingSnapshot(
+                listing_id="autoscout24:t", observed_at=datetime(2026, 8, 29, 8, 23, 59, 488265),
+                price_original=30_000.0, currency_original="EUR", price_eur=30_000.0, mileage_km=50_000,
+            )
+        )
+    out = tmp_path / "listings.json"
+    cli.cmd_export(argparse.Namespace(out=str(out)))
+    payload = json.loads(out.read_text())
+    assert payload["latestScrapeAt"] == "2026-08-29T08:23:59Z"
+    assert payload["latestScrapeDate"] == "2026-08-29"
