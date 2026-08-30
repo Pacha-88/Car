@@ -336,7 +336,7 @@ function Dashboard({ data }: { data: ReturnType<typeof useListings> }) {
         <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
           <div className="min-w-0">
             <div className="eyebrow">Used market · Germany · Austria · Hungary</div>
-            <h1 className="mt-1.5 text-[22px] font-semibold leading-none tracking-tight text-primary">
+            <h1 className="mt-1.5 text-[28px] font-bold leading-none tracking-tight text-primary">
               Tesla {model === "model_y" ? "Model Y" : "Model 3"}
             </h1>
             {latestScrapeDate && <ScrapeFreshness date={latestScrapeDate} at={latestScrapeAt} />}

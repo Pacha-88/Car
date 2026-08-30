@@ -10,9 +10,16 @@ interface StatTilesProps {
 
 function Tile({ value, label, hint }: { value: string; label: string; hint?: string }) {
   return (
-    <div title={hint} className="bg-surface-1 px-4 py-2.5">
-      <div className="eyebrow mb-1.5">{label}</div>
-      <div className="numeral text-[19px] font-semibold leading-none text-primary">{value}</div>
+    <div title={hint} className="bg-surface-1 px-4 pb-3 pt-2.5">
+      <div className="eyebrow mb-2">{label}</div>
+      {/* 26px from sm up, not 19: these four numbers are the page's own
+          headline, and at card-title size they read as one more label. Size
+          carries the hierarchy so colour does not have to. On a phone the
+          tile is half the screen and 26px broke "12,77 millió Ft" onto two
+          lines - there the numeral keeps its old size, whole. */}
+      <div className="numeral whitespace-nowrap text-[19px] font-semibold leading-none tracking-tight text-primary sm:text-[26px]">
+        {value}
+      </div>
     </div>
   );
 }
