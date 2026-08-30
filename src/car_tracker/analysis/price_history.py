@@ -102,6 +102,7 @@ def market_history(
     snapshots: list[ListingSnapshot],
     *,
     model_of: dict[str, str],
+    alive_until: dict[str, date] | None = None,
     min_day_sample: int = MIN_DAY_SAMPLE,
 ) -> list[MarketDay]:
     """A daily median and a mix-proof index per model, oldest first.
@@ -114,9 +115,16 @@ def market_history(
     runs scrape-local from home, so on a plain CI day the Hungarian cars
     vanished from the sample and the median swung ~4% with nobody
     repricing anything, then swung back on the next manual run. A car is
-    believed on sale from its first usable snapshot to its last; a partial
-    scrape likewise no longer distorts the median, because the cars the
-    broken run missed are carried at their last known price.
+    believed on sale from its first usable snapshot until `alive_until`
+    says otherwise - the caller knows which listings are still active,
+    which snapshots alone cannot say: without it, every Hungarian car
+    dropped out again the day AFTER the last manual run, the exact days a
+    reader looks at, because nothing later than that run exists yet. A car
+    the site retired stops being carried at its own last sighting. Absent
+    the mapping, a listing's last snapshot bounds it (the conservative
+    reading). A partial scrape likewise no longer distorts the median,
+    because the cars the broken run missed are carried at their last known
+    price.
 
     The index is stricter: carried prices claim "unchanged", which is not
     knowledge, so its steps use only prices actually OBSERVED on both of
@@ -168,8 +176,9 @@ def market_history(
                     base = observed
             # Everyone believed on sale today, at their last known price.
             carried: list[float] = []
-            for pts in model_points.values():
-                if pts[0][0] <= day <= pts[-1][0]:
+            for listing_id, pts in model_points.items():
+                last_day = alive_until.get(listing_id, pts[-1][0]) if alive_until else pts[-1][0]
+                if pts[0][0] <= day <= last_day:
                     latest = max(pt for pt in pts if pt[0] <= day)
                     carried.append(latest[1])
             if len(carried) < min_day_sample:

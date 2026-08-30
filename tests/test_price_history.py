@@ -317,3 +317,28 @@ def test_a_referral_link_is_not_a_car_in_the_market_median():
 def test_a_car_that_reads_as_a_euro_for_one_scrape_has_not_been_given_away():
     snaps = [_snap("a", 1, 40000.0), _snap("a", 2, 1.0), _snap("a", 3, 39000.0)]
     assert [p.price_eur for p in price_points(snaps)] == [40000.0, 39000.0]
+
+
+def test_active_cars_are_carried_past_their_last_scrape():
+    """The trailing edge of the cadence fix: after the LAST manual run
+    nothing newer exists for the Hungarian cars, so bounding their life by
+    their last snapshot dropped the whole cohort the day after that run -
+    the exact days a reader looks at. The caller says who is still active;
+    a retired car still stops at its own last sighting."""
+    model_of: dict[str, str] = {}
+    snaps: list = []
+    for day in range(1, 7):
+        snaps += _day(model_of, day, 20, 34000.0)
+    for i in range(20):
+        model_of[f"hu{i}"] = "model_y"
+        snaps.append(_snap(f"hu{i}", 1, 38000.0))  # one manual run, then silence
+
+    still_active = {lid: date(2026, 8, 6) for lid in model_of}
+    days = market_history(snaps, model_of=model_of, alive_until=still_active)
+    assert [d.n for d in days] == [40] * 6, "still-active cars stay carried"
+
+    retired_after_day_one = dict(still_active)
+    for i in range(20):
+        retired_after_day_one[f"hu{i}"] = date(2026, 8, 1)
+    days = market_history(snaps, model_of=model_of, alive_until=retired_after_day_one)
+    assert [d.n for d in days] == [40, 20, 20, 20, 20, 20], "a real exit still shows"

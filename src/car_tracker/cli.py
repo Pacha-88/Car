@@ -653,7 +653,21 @@ def cmd_export(args: argparse.Namespace) -> None:
                 }
             )
 
-        market_days = market_history(all_snapshots, model_of=model_of)
+        # How long each car is BELIEVED on sale. Snapshots alone cannot
+        # say: a still-active Hungarian car has nothing newer than the
+        # last manual run, and bounding its life by its last snapshot
+        # dropped the whole cohort out of the market series the day after
+        # that run - the exact days a reader looks at. Active listings are
+        # believed on sale through the newest scrape of any source;
+        # retired ones stop at their own last sighting.
+        alive_until: dict[str, date] = {}
+        if latest_observed_at is not None:
+            latest_observed_date = latest_observed_at.date()
+            for listing in all_listings:
+                alive_until[listing.id] = (
+                    latest_observed_date if listing.is_active else listing.last_seen_at.date()
+                )
+        market_days = market_history(all_snapshots, model_of=model_of, alive_until=alive_until)
 
         # The same series again, sliced by registration year, so the trend
         # panel can answer "what did 2023 cars do?" and not just "what did
@@ -673,7 +687,7 @@ def cmd_export(args: argparse.Namespace) -> None:
             for listing_id, model in model_of.items()
             if year_of.get(listing_id) is not None
         }
-        market_days_by_year = market_history(all_snapshots, model_of=year_group_of)
+        market_days_by_year = market_history(all_snapshots, model_of=year_group_of, alive_until=alive_until)
 
     payload = {
         "generatedAt": now.isoformat(),
