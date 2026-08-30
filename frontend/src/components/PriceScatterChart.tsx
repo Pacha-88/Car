@@ -421,9 +421,13 @@ function DotsLayer({
 function YearLegend({ years, maxYear }: { years: number[]; maxYear: number }) {
   const entries = yearLegendEntries(years, maxYear);
   return (
-    <div className="flex shrink-0 items-center gap-2 text-[10px] text-muted">
+    // min-w-0 + wrap, not shrink-0: six year entries in one unshrinkable
+    // row were wider than a phone - the one element pushing the whole page
+    // into horizontal scroll at 375px (413px of it). The chips wrap into
+    // rows instead, inside their own box.
+    <div className="flex min-w-0 flex-wrap items-center gap-2 text-[10px] text-muted">
       <span className="eyebrow">Reg. year</span>
-      <div className="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-2 py-1">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-border bg-surface-2 px-2 py-1">
         {entries.map((e) => (
           <span key={e.label} className="flex items-center gap-1 text-secondary">
             {/* The swatch mirrors the mark, so the legend teaches the

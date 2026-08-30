@@ -106,7 +106,11 @@ export function DepreciationModule({ listings }: DepreciationModuleProps) {
             half of each bucket (25th–75th percentile)
           </p>
         </div>
-        <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-surface-2 p-0.5">
+        {/* flex-wrap: five variant buttons in one unwrappable pill were
+            344px - wider than a phone, and the last element still pushing
+            the page into horizontal scroll at 375px. Wrapped, the group
+            becomes two rows on narrow screens and stays one on desktop. */}
+        <div className="inline-flex min-w-0 flex-wrap items-center gap-0.5 rounded-lg border border-border bg-surface-2 p-0.5">
           {VARIANT_TABS.map((t) => (
             <button
               key={t.key}

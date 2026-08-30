@@ -108,17 +108,48 @@ function SegmentedButton({
   );
 }
 
+function initialTheme(): "dark" | "light" {
+  // Guarded like useMoney and useWatchlist: private windows and blocked
+  // site data make localStorage THROW, and this initializer runs in the
+  // header - outside every ErrorBoundary - so an unguarded read took the
+  // whole dashboard down for exactly those visitors.
+  try {
+    const stored = localStorage.getItem("car-tracker.theme");
+    if (stored === "dark" || stored === "light") return stored;
+  } catch {
+    // fall through to the OS preference
+  }
+  try {
+    if (window.matchMedia("(prefers-color-scheme: light)").matches) return "light";
+  } catch {
+    // no matchMedia - keep the design's dark-first default
+  }
+  return "dark";
+}
+
 function ThemeToggle() {
-  const [theme, setTheme] = useState<"dark" | "light">(() => {
-    return (localStorage.getItem("car-tracker.theme") as "dark" | "light" | null) ?? "dark";
-  });
+  const [theme, setTheme] = useState<"dark" | "light">(initialTheme);
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
-    localStorage.setItem("car-tracker.theme", theme);
   }, [theme]);
   return (
     <SegmentedButton
-      onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+      onClick={() =>
+        setTheme((current) => {
+          const next = current === "dark" ? "light" : "dark";
+          // Persisted HERE, not in the effect: the effect ran on mount and
+          // pinned the default as if the visitor had chosen it, so a user
+          // who never touched the toggle was locked to dark and a later OS
+          // switch to light could never reach them. Only a click is a
+          // choice.
+          try {
+            localStorage.setItem("car-tracker.theme", next);
+          } catch {
+            // a choice that can't be remembered still applies to this visit
+          }
+          return next;
+        })
+      }
       title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
     >
       {theme === "dark" ? "☀︎" : "☾"}

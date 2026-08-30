@@ -10,6 +10,19 @@
     />
   </head>
   <body>
+    <script>
+      // Before first paint, so a light-OS visitor never sees a dark flash:
+      // the stylesheet's default is dark and React only applies the
+      // attribute after hydration. Same precedence as the app: an explicit
+      // stored choice wins, then the OS preference.
+      try {
+        var theme = localStorage.getItem("car-tracker.theme");
+        if (theme !== "dark" && theme !== "light") {
+          theme = window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+        }
+        document.documentElement.setAttribute("data-theme", theme);
+      } catch (e) {}
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
