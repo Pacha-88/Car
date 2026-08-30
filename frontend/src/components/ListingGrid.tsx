@@ -242,7 +242,7 @@ function ListingCard({
       rel="noopener noreferrer"
       className="group flex flex-col overflow-hidden rounded-xl border border-border bg-surface-1 transition-[border-color,box-shadow,transform] duration-150 hover:-translate-y-px hover:border-border-strong hover:shadow-[var(--shadow-2)]"
     >
-      <div className="relative aspect-[4/3] w-full overflow-hidden bg-surface-2">
+      <div className="photo-well relative aspect-[4/3] w-full overflow-hidden">
         <ListingPhoto src={listing.photoUrls[0]} withLabel />
         {/* Scrim: the badges sit on whatever the photo happens to be, and a
             white car under a white badge is unreadable without it. */}
@@ -335,7 +335,7 @@ function ListingRow({
       rel="noopener noreferrer"
       className="flex items-center gap-3 rounded-lg border border-border bg-surface-1 p-2 transition-colors hover:border-border-strong hover:bg-surface-2"
     >
-      <div className="h-14 w-20 shrink-0 overflow-hidden rounded-md bg-surface-2">
+      <div className="photo-well h-14 w-20 shrink-0 overflow-hidden rounded-md">
         <ListingPhoto src={listing.photoUrls[0]} placeholderClassName="text-base" />
       </div>
       <div className="min-w-0 flex-1">

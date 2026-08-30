@@ -58,6 +58,9 @@
 
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-2: 0 6px 20px -6px rgba(0, 0, 0, 0.65);
+  /* The page's one light source (see body): monochrome on purpose, like
+     the accent - atmosphere may not acquire a hue the data doesn't have. */
+  --page-glow: rgba(255, 255, 255, 0.05);
 
   --series-1: #3987e5; /* blue - AutoScout24 */
   --series-2: #d95926; /* orange - Kleinanzeigen */
@@ -109,6 +112,7 @@
 
   --shadow-1: 0 1px 2px rgba(11, 11, 11, 0.06);
   --shadow-2: 0 6px 20px -6px rgba(11, 11, 11, 0.18);
+  --page-glow: rgba(11, 11, 11, 0.028);
 
   --series-1: #2a78d6;
   --series-2: #eb6834;
@@ -141,7 +145,13 @@ body,
 
 body {
   margin: 0;
-  background: var(--surface-0);
+  /* Top-lit, not flat: one wide, soft radial at the head of the document
+     gives the page depth without a second hue. It scrolls away with the
+     header, which is the honest behaviour for a light source attached to
+     the page rather than the window. */
+  background:
+    radial-gradient(1100px 440px at 50% -120px, var(--page-glow), transparent 70%),
+    var(--surface-0);
   color: var(--text-primary);
   font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -168,6 +178,43 @@ body {
   letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--text-muted);
+}
+
+/* Where a listing photo lives, or would: a quiet diagonal fall of light
+   instead of one flat grey, so an ad without a picture still looks
+   designed rather than missing. Shared by the card, the row thumb and the
+   hover card. */
+.photo-well {
+  background: linear-gradient(135deg, var(--surface-2), var(--surface-3));
+}
+
+/* Pressing should feel like pressing. Transform only - never colour - and
+   only while the button is actually down. */
+:where(button):not(:disabled) {
+  transition-property: transform;
+  transition-duration: 60ms;
+}
+:where(button):not(:disabled):active {
+  transform: scale(0.97);
+}
+
+/* Scrollbars in the page's own ink - the browser's default chrome is the
+   one element that otherwise ignores both themes. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface-3) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--surface-3);
+  border-radius: 8px;
+  border: 2px solid var(--surface-0);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 /* Numbers that are read as quantities, not prose: tabular figures plus

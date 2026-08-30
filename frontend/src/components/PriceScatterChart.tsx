@@ -467,7 +467,7 @@ function HoverCard({ point, watchlist, onToggleWatchlist, dealScores }: HoverCar
   return (
     <div className="w-64 overflow-hidden rounded-xl border border-border bg-surface-1 shadow-[var(--shadow-2)]">
       {listing.photoUrls[0] && (
-        <div className="relative h-32 w-full bg-surface-2">
+        <div className="photo-well relative h-32 w-full">
           <ListingPhoto src={listing.photoUrls[0]} withLabel />
           {listing.firstRegistration && (
             <span className="absolute left-2 top-2 rounded-md bg-surface-1/85 px-1.5 py-0.5 text-[10px] font-medium text-secondary backdrop-blur-sm">
