@@ -16,10 +16,11 @@ from inside this repo.
    built for exactly this project's usage pattern: a short-lived connection
    once a day from GitHub Actions, not a long-lived server).
 4. It looks like `postgresql://postgres.xxxxx:[YOUR-PASSWORD]@aws-...pooler.supabase.com:6543/postgres`.
-   Fill in your real password, and change the scheme from `postgresql://` to
-   `postgresql+psycopg://` (SQLAlchemy needs the driver name in the URL).
-   Final shape:
-   `postgresql+psycopg://postgres.xxxxx:your-real-password@aws-...pooler.supabase.com:6543/postgres`
+   Fill in your real password and use it **exactly as Supabase hands it
+   over** — no scheme editing. (This doc used to ask for a hand-edit to
+   `postgresql+psycopg://`; that step got forgotten on the first real run,
+   so the code now accepts either spelling and routes both to the right
+   driver itself — see `db/session.py`.)
 
 You don't need to create any tables yourself — the workflow runs
 `car-tracker init-db` every time, which creates them on first run and is a
@@ -178,8 +179,10 @@ only on the first run:
 3. Runs the scrape **straight from this GitHub repo** (`uv tool run --from
    git+.../Car`), always at the latest code — fixes and new sources arrive
    with no action on your side.
-4. Offers to schedule itself daily at 07:00 (Task Scheduler on Windows,
-   cron on macOS/Linux). Answer `i` once and you're done forever.
+4. Offers to schedule itself daily at 07:30 (Task Scheduler on Windows,
+   cron on macOS/Linux) — half an hour after the GitHub run's 05:00 UTC,
+   which lands at exactly 07:00 CEST in summer, so the two never write
+   the same minute. Answer `i` once and you're done forever.
 
 The whole plumbing (uv check → saved config → run-from-GitHub → summary)
 was executed end-to-end from this project's sandbox; the sources
