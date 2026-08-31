@@ -101,3 +101,37 @@ def test_engine_from_a_raw_supabase_url_uses_the_psycopg3_dialect():
     does and assert the dialect, without connecting."""
     engine = get_engine(SUPABASE_RAW)
     assert engine.dialect.driver == "psycopg"
+
+
+# --- the zero-config default -------------------------------------------
+# DEFAULT_SQLITE_PATH is relative, so the database lands wherever the
+# process was started. That is the zero-setup dev experience AND a footgun:
+# a command run from the wrong directory without DATABASE_URL silently
+# creates a fresh, empty database right there and reads as "the scrape ran
+# but the dashboard is empty". A stray zero-byte car_tracker.db really did
+# turn up in frontend/public/data/. The default must therefore say where
+# the data actually is.
+
+
+def test_defaulting_to_local_sqlite_names_the_absolute_path(tmp_path, monkeypatch, capsys):
+    from car_tracker.db import session as session_module
+
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(session_module, "_ENGINES", {})
+
+    session_module.get_engine()
+
+    out = capsys.readouterr().out
+    assert "DATABASE_URL not set" in out
+    assert str(tmp_path) in out  # the ABSOLUTE path - naming the cwd is the point
+
+
+def test_a_configured_url_stays_quiet(tmp_path, monkeypatch, capsys):
+    """The notice is for the default only - a configured run printing a
+    db line per process would just be noise nobody reads."""
+    from car_tracker.db import session as session_module
+
+    monkeypatch.setattr(session_module, "_ENGINES", {})
+    get_engine(f"sqlite:///{tmp_path}/configured.db")
+    assert "DATABASE_URL" not in capsys.readouterr().out

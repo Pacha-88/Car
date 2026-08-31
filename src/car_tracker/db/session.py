@@ -74,10 +74,22 @@ _ENGINES: dict[str, object] = {}
 
 
 def get_engine(database_url: str | None = None):
-    raw = database_url or os.environ.get("DATABASE_URL") or f"sqlite:///{DEFAULT_SQLITE_PATH}"
+    configured = database_url or os.environ.get("DATABASE_URL")
+    raw = configured or f"sqlite:///{DEFAULT_SQLITE_PATH}"
     url = normalize_database_url(raw)
     engine = _ENGINES.get(url)
     if engine is None:
+        if not configured:
+            # The default path is RELATIVE, so it lands wherever the process
+            # was started - which is the feature (zero-setup dev from the
+            # repo root) and the footgun: run any command from another
+            # directory without DATABASE_URL and SQLite silently creates a
+            # fresh, empty database right there. That is not hypothetical -
+            # a stray zero-byte car_tracker.db turned up in
+            # frontend/public/data/, and on a real machine the same slip
+            # reads as "the scrape ran but the dashboard is empty". Say
+            # where the data actually is, once per process.
+            print(f"db: DATABASE_URL not set - using local SQLite at {os.path.abspath(DEFAULT_SQLITE_PATH)}")
         engine = _ENGINES[url] = create_engine(url, connect_args=connect_args_for(url))
     return engine
 
