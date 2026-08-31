@@ -53,10 +53,17 @@ export function ListingPhoto({
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
 
   if (!src || failedSrc === src) {
+    // Two different gaps, two different truths. "No photo in this ad" is a
+    // claim about the SELLER - verified for the no-URL case against the
+    // offer pages. A photo that exists but would not load (a dead CDN
+    // link, hotlink protection, an ad old enough for its images to have
+    // expired) is our gap, not theirs, and wearing the seller's label for
+    // it blamed them for every broken URL.
+    const label = src ? "Photo couldn't load" : "No photo in this ad";
     return (
       <div className={`flex h-full w-full flex-col items-center justify-center gap-1.5 text-muted ${placeholderClassName}`}>
         <CarSilhouette />
-        {withLabel && <span className="text-[10px]">No photo in this ad</span>}
+        {withLabel && <span className="text-[10px]">{label}</span>}
       </div>
     );
   }

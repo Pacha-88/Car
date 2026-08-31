@@ -95,7 +95,10 @@
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --surface-0: #f9f9f7;
+  /* The page plane sits a step below the white cards - at 1% apart the
+     panels never visibly lifted and light mode read as one flat sheet
+     while dark mode had its atmosphere pass. Paper, then cards ON it. */
+  --surface-0: #f2f1ed;
   --surface-1: #fcfcfb;
   --surface-2: #f1f0ec;
   --surface-3: #e7e6e0;
@@ -110,9 +113,11 @@
   --accent: #1b1b19;
   --accent-ink: #fbfbf8;
 
-  --shadow-1: 0 1px 2px rgba(11, 11, 11, 0.06);
-  --shadow-2: 0 6px 20px -6px rgba(11, 11, 11, 0.18);
-  --page-glow: rgba(11, 11, 11, 0.028);
+  /* A soft contact line under every card plus a real (still quiet) drop -
+     the depth cues that do on paper what the glow does on the dark plane. */
+  --shadow-1: 0 1px 1.5px rgba(11, 11, 11, 0.05), 0 2px 6px -2px rgba(11, 11, 11, 0.08);
+  --shadow-2: 0 8px 24px -8px rgba(11, 11, 11, 0.22);
+  --page-glow: rgba(11, 11, 11, 0.04);
 
   --series-1: #2a78d6;
   --series-2: #eb6834;
@@ -178,6 +183,24 @@ body {
   letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--text-muted);
+}
+
+/* The panels' shared signature: a short ink tick ahead of each section
+   title. Ink, not a hue - the accent is monochrome by law (see :root), so
+   this can mark "a section starts here" on every panel without handing
+   any of them a data colour's identity. */
+.title-tick {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.title-tick::before {
+  content: "";
+  width: 3px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0.85;
 }
 
 /* Where a listing photo lives, or would: a quiet diagonal fall of light
