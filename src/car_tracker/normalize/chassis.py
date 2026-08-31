@@ -45,10 +45,27 @@ CUTOVERS: dict[str, ChassisCutover] = {
     "model_y": ChassisCutover(refresh_name=MODEL_Y_REFRESH, cutover_date=date(2025, 3, 1), cutover_model_year=2025),
 }
 
-# Rare but cheap to catch: some listings spell the generation out in the title.
+# Some listings spell the generation out in the title. The codenames are
+# exact; the "new model" phrasings were added from real ads that carried
+# them as a badge ("Standard RWD Neues Modell", "RWD Plus NEW-Model") -
+# sellers of refresh cars registered inside the runout window, where the
+# date rule alone must guess. The phrasing could in principle appear in a
+# legacy ad's sales pitch ("the new model is out, hence the price"), but
+# marketplace titles are badge-strings, not sentences, and every live
+# occurrence found named the car itself. "Launch series" is a trim only
+# the Model Y refresh ever had.
 _TITLE_HINTS: dict[str, tuple[str, ...]] = {
-    MODEL_3_REFRESH: ("highland",),
-    MODEL_Y_REFRESH: ("juniper",),
+    MODEL_3_REFRESH: ("highland", "new model", "new-model", "neues modell", "nieuw model", "új modell", "uj modell"),
+    MODEL_Y_REFRESH: (
+        "juniper",
+        "launch series",
+        "new model",
+        "new-model",
+        "neues modell",
+        "nieuw model",
+        "új modell",
+        "uj modell",
+    ),
     LEGACY: ("legacy", "pre-facelift", "pre facelift"),
 }
 

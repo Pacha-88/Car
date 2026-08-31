@@ -62,3 +62,16 @@ def test_no_signal_returns_none():
 def test_unknown_model_raises():
     with pytest.raises(ValueError):
         detect_chassis("model_s")
+
+
+def test_new_model_badge_beats_a_runout_window_date():
+    """Real ads carry the refresh as a badge without the codename -
+    "Standard RWD Neues Modell", "RWD Plus NEW-Model" - and inside the
+    runout window the date rule alone must guess. The badge is the
+    seller saying which car it is, so it wins."""
+    assert (
+        detect_chassis("model_y", title="Standard RWD Neues Modell", first_registration=date(2025, 1, 15))
+        == "juniper"
+    )
+    assert detect_chassis("model_3", title="RWD Plus NEW-Model") == "highland"
+    assert detect_chassis("model_y", title="Model Y Launch Series") == "juniper"

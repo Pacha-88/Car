@@ -90,11 +90,13 @@ def test_an_unrecognisable_url_yields_no_colour(url):
     ("title", "expected"),
     [
         # German, including the adjective endings and the compound shades
-        # that car ads are actually written in.
-        ("Performance Dual AWD*LEDER/Weiss*21Zoll*", "white"),
+        # that car ads are actually written in. Two rows that used to sit
+        # here asserted misreadings as correct: "*LEDER/Weiss*" (white
+        # LEATHER - the audit found the actual car's colour field says
+        # black) and "rote Bremssättel" (a Performance's red CALIPERS).
+        # Both now live in the part-guard tests below, expecting None.
         ("ModelY LongRange Dual AWD Schwarz Schwarz Steuer", "black"),
         ("Model 3 schwarz, Sportpaket", "black"),
-        ("Model Y rote Bremssättel", "red"),
         ("Model 3 dunkelblau metallic", "blue"),
         ("Model Y tiefschwarz", "black"),
         ("Model Y hellgrau", "grey"),
@@ -185,3 +187,30 @@ def test_the_leftmost_colour_wins_across_both_vocabularies():
     """Running English to exhaustion first let a later English word beat an
     earlier German one - which is how "White Interior" outranked the paint."""
     assert normalize_color("Model Y fehér, Black Package") == "white"
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        # All from the live export's classification audit. White LEATHER
+        # in a black car, exported as a white car, because the guard did
+        # not know "/" as a separator; "Innen Weiß" (white inside), where
+        # the bare adverb was missing from the vocabulary; and a
+        # Performance's red CALIPERS read as a red car - the case that
+        # widened the cabin guard into a part guard.
+        "Performance Dual AWD*LEDER/Weiss*21Zoll*",
+        "Performance FSD Innen Weiß",
+        "Model Y rote Bremssättel",
+        "Model 3 fekete tető, vonóhorog",
+        "Long Range AWD Black Roof",
+    ],
+)
+def test_a_part_s_colour_is_not_the_car_s(title):
+    assert normalize_color(title) is None
+
+
+def test_a_part_s_colour_does_not_hide_the_car_s_own():
+    """The guard must skip the part and keep reading: a black-roofed white
+    car is still a white car."""
+    assert normalize_color("fekete tetős fehér Model Y") == "white"
+    assert normalize_color("Model 3 weiß, rote Bremssättel") == "white"

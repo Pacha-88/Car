@@ -119,22 +119,31 @@ _ALL_COLOUR_RES = [
 # as new one-word names turn up.
 _WHOLE_NAMES = {"quicksilver": "silver"}
 
-# A colour that belongs to the cabin, not to the paint. Real headlines from
-# the current export: "White Interior", "weißes Interieur", and Tesla's own
-# option names are English even in a German ad - so this catches both
-# vocabularies. Reading either as the car's colour is worse than reading
-# nothing, which is the line this whole module is drawn on.
-_INTERIOR_WORDS = r"interior|interieur|innenraum|innenausstattung|sitze\b|leder|belső|belso|kárpit|karpit|bőr"
-# Directly attached only - whitespace or a hyphen, nothing else. That is
-# what separates "schwarze Ledersitze" (the seats are black) from "weiß mit
-# schwarzem Leder" (the CAR is white and the seats are black), and from
-# "weiß, Lederausstattung", where the comma means the two are a list.
-_CABIN_AFTER = re.compile(rf"^[\s\-]{{1,3}}(?:{_INTERIOR_WORDS})", re.I)
-_CABIN_BEFORE = re.compile(rf"(?:{_INTERIOR_WORDS})[\s\-]{{1,3}}$", re.I)
+# A colour that belongs to a named PART, not to the paint. The cabin came
+# first ("White Interior", "weißes Interieur", "Innen Weiß" - Tesla's own
+# option names are English even in a German ad), and the classification
+# audit widened it: "*LEDER/Weiss*" is white leather in a black car, and
+# "rote Bremssättel" is a Performance's red calipers on a car of any
+# colour - both were exported as the car's paint. Reading a part's colour
+# as the car's is worse than reading nothing, which is the line this whole
+# module is drawn on. "innen" is the bare adverb ("Innen Weiß").
+_PART_WORDS = (
+    r"interior|interieur|innen\b|innenraum|innenausstattung|sitze\b|leder"
+    r"|brems|calipers?|felgen?|rims|dach\b|roof|himmel|spoiler"
+    r"|belső|belso|belül|belul|kárpit|karpit|bőr|féknyereg|feknyereg|felni|tető|teto\b"
+)
+# Directly attached only - whitespace or a slash, nothing else (hyphens
+# are normalised to spaces before matching). That is what separates
+# "schwarze Ledersitze" (the seats are black) from "weiß mit schwarzem
+# Leder" (the CAR is white and the seats are black), and from "weiß,
+# Lederausstattung", where the comma means a list. The slash earned its
+# place from the real "*LEDER/Weiss*21Zoll*".
+_PART_AFTER = re.compile(rf"^[\s/]{{1,3}}(?:{_PART_WORDS})", re.I)
+_PART_BEFORE = re.compile(rf"(?:{_PART_WORDS})[\s/]{{1,3}}$", re.I)
 
 
-def _describes_the_cabin(text: str, start: int, end: int) -> bool:
-    return bool(_CABIN_AFTER.search(text[end:]) or _CABIN_BEFORE.search(text[:start]))
+def _describes_a_part(text: str, start: int, end: int) -> bool:
+    return bool(_PART_AFTER.search(text[end:]) or _PART_BEFORE.search(text[:start]))
 
 
 def normalize_color(raw: str | None) -> str | None:
@@ -152,8 +161,8 @@ def normalize_color(raw: str | None) -> str | None:
     earliest: tuple[int, str] | None = None
     for pattern, colour in _ALL_COLOUR_RES:
         for match in pattern.finditer(text):
-            if _describes_the_cabin(text, match.start(), match.end()):
-                continue  # the seats are black, the car is not
+            if _describes_a_part(text, match.start(), match.end()):
+                continue  # the seats (or calipers) are that colour, the car is not
             if earliest is None or match.start() < earliest[0]:
                 earliest = (match.start(), colour)
             break  # this vocabulary entry cannot beat its own first usable hit
