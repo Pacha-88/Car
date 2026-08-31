@@ -160,7 +160,7 @@ function ThemeToggle() {
     document.documentElement.setAttribute("data-theme", theme);
     // The browser's own chrome (mobile URL bar) follows the page plane;
     // values are the two themes' surface-0, same as index.html's pre-paint.
-    document.getElementById("meta-theme")?.setAttribute("content", theme === "light" ? "#f2f1ed" : "#0d0d0d");
+    document.getElementById("meta-theme")?.setAttribute("content", theme === "light" ? "#f2f1ed" : "#0a0a09");
   }, [theme]);
   return (
     <SegmentedButton

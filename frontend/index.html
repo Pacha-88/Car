@@ -16,7 +16,7 @@
     <!-- Colours the browser's own chrome (mobile URL bar) to the page
          plane. The pre-paint script below and ThemeToggle keep it in step
          with the applied theme; these two values are the themes' surface-0. -->
-    <meta name="theme-color" id="meta-theme" content="#0d0d0d" />
+    <meta name="theme-color" id="meta-theme" content="#0a0a09" />
   </head>
   <body>
     <script>
@@ -32,7 +32,7 @@
         document.documentElement.setAttribute("data-theme", theme);
         // Keep in step with the two surface-0 values in index.css.
         var meta = document.getElementById("meta-theme");
-        if (meta) meta.setAttribute("content", theme === "light" ? "#f2f1ed" : "#0d0d0d");
+        if (meta) meta.setAttribute("content", theme === "light" ? "#f2f1ed" : "#0a0a09");
       } catch (e) {}
     </script>
     <div id="root"></div>

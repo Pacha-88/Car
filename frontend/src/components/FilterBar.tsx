@@ -137,7 +137,7 @@ export function FilterBar({
           type="button"
           onClick={onReset}
           disabled={narrowedGroups === 0}
-          className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-secondary transition-colors hover:border-border-strong hover:bg-surface-2 hover:text-primary disabled:cursor-default disabled:opacity-35 disabled:hover:border-border disabled:hover:bg-transparent disabled:hover:text-secondary"
+          className="whitespace-nowrap rounded-md border border-border px-2.5 py-1 text-xs font-medium text-secondary transition-colors hover:border-border-strong hover:bg-surface-2 hover:text-primary disabled:cursor-default disabled:opacity-35 disabled:hover:border-border disabled:hover:bg-transparent disabled:hover:text-secondary"
         >
           Reset all
         </button>

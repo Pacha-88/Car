@@ -35,17 +35,23 @@
 */
 :root {
   color-scheme: dark;
-  --surface-0: #0d0d0d; /* page plane */
-  --surface-1: #1a1a19; /* card / chart surface */
-  --surface-2: #232322; /* raised chip/input surface */
-  --surface-3: #2e2e2c; /* chip hover */
+  /* The ladder is deliberately WIDE. At surface-1 = #1a1a19 over #0d0d0d
+     the cards were a 5% step nobody's laptop at half brightness could
+     see - "everything melts into the black" was the actual user report.
+     Depth in dark mode is carried by the surfaces themselves (shadows
+     have nothing to darken), so the page floor drops, the cards rise,
+     and every hairline gets a step stronger. */
+  --surface-0: #0a0a09; /* page plane */
+  --surface-1: #21201e; /* card / chart surface */
+  --surface-2: #2b2a27; /* raised chip/input surface */
+  --surface-3: #383734; /* chip hover */
   --text-primary: #ffffff;
-  --text-secondary: #c3c2b7;
-  --text-muted: #898781;
-  --gridline: #2c2c2a;
-  --baseline: #383835;
-  --border: rgba(255, 255, 255, 0.1);
-  --border-strong: rgba(255, 255, 255, 0.22);
+  --text-secondary: #cccbc0;
+  --text-muted: #98968d;
+  --gridline: #32312e;
+  --baseline: #454440;
+  --border: rgba(255, 255, 255, 0.13);
+  --border-strong: rgba(255, 255, 255, 0.3);
 
   /* UI accent - deliberately MONOCHROME. Every hue on this page is spoken
      for by data (four marketplace series, six registration-year steps), so
@@ -56,11 +62,14 @@
   --accent: #f2f1eb;
   --accent-ink: #111110;
 
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-2: 0 6px 20px -6px rgba(0, 0, 0, 0.65);
+  /* An inset top edge-light on every panel, in place of a drop shadow a
+     black page can't show: the same "lit from above" story the page glow
+     tells, drawn where the light would actually catch. */
+  --shadow-1: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-2: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 8px 24px -6px rgba(0, 0, 0, 0.7);
   /* The page's one light source (see body): monochrome on purpose, like
      the accent - atmosphere may not acquire a hue the data doesn't have. */
-  --page-glow: rgba(255, 255, 255, 0.05);
+  --page-glow: rgba(255, 255, 255, 0.06);
 
   --series-1: #3987e5; /* blue - AutoScout24 */
   --series-2: #d95926; /* orange - Kleinanzeigen */
@@ -77,14 +86,21 @@
      product decision (the original tool this recreates used distinct
      colors, and 3k+ overlapping points need identity, not magnitude).
      Custom-optimized for this app's exact surfaces and validated with the
-     dataviz skill's validator on the all-pairs (scatter) pairlist - both
-     modes pass every hard gate: dark worst-pair CVD dE 10.4 / normal 22.2,
-     light 12.5 / 26.2. Two slots sit below 3:1 contrast vs the surface
-     (WARN): the relief obligation is met by the listing grid (the same
-     data as a table) plus each point's hover card, and every point
-     carries a 2px surface stroke. Light values are the same five hues
-     (+-10 deg) re-stepped for the light surface - re-validate BOTH modes
-     with scripts/validate_palette.js if you touch either set. */
+     dataviz skill's validator on the all-pairs (scatter) pairlist. On the
+     current dark card surface (#21201e, the contrast pass): worst filled-
+     pair CVD dE 10.4 (blue-purple, protan), and three slots sit below 3:1
+     contrast (red 2.8, green 2.7, blue 2.4) - the relief obligation is
+     met by the listing grid (the same data as a table), each point's
+     hover card, and the 2px surface stroke every point carries.
+     Deliberately NOT re-stepped lighter: every candidate that cleared
+     3:1 collapsed a filled pair's CVD separation to ~5 (blue-purple or
+     green-grey), trading a relieved warning for an unrelieved failure.
+     The grey "older" slot fails chroma and its gold pairing sits at
+     normal dE 13.3 by design - it is the one SHAPE-encoded bucket
+     (hollow ring), which is its documented relief. Light values are the
+     same five hues (+-10 deg) re-stepped for the light surface -
+     re-validate BOTH modes with scripts/validate_palette.js if you touch
+     either set or either surface. */
   --year-older: #898781;
   --year-1: #b764d9; /* purple  - oldest distinct year */
   --year-2: #c62301; /* red     */
