@@ -203,12 +203,34 @@ body {
   opacity: 0.85;
 }
 
+/* The one display face: the H1 wears a high-contrast system serif over an
+   otherwise sans dashboard - an editorial signature that costs no webfont.
+   Only the masthead: everything that measures stays sans, because serif
+   text figures are for reading, not for lining up. */
+.display-serif {
+  font-family: ui-serif, Georgia, "Times New Roman", serif;
+  letter-spacing: -0.015em;
+}
+
 /* Where a listing photo lives, or would: a quiet diagonal fall of light
    instead of one flat grey, so an ad without a picture still looks
    designed rather than missing. Shared by the card, the row thumb and the
    hover card. */
 .photo-well {
   background: linear-gradient(135deg, var(--surface-2), var(--surface-3));
+}
+
+/* A photo breathes when its card is hovered - the whole card is a link,
+   and the slow ease says "this opens" the way colour is not allowed to.
+   Transform only, and only for visitors who have not asked motion to
+   stop; the wells already clip, so the zoom never spills. */
+@media (prefers-reduced-motion: no-preference) {
+  .photo-well img {
+    transition: transform 0.35s cubic-bezier(0.2, 0.6, 0.25, 1);
+  }
+  a:hover .photo-well img {
+    transform: scale(1.045);
+  }
 }
 
 /* Pressing should feel like pressing. Transform only - never colour - and

@@ -158,6 +158,9 @@ function ThemeToggle() {
   const [theme, setTheme] = useState<"dark" | "light">(initialTheme);
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
+    // The browser's own chrome (mobile URL bar) follows the page plane;
+    // values are the two themes' surface-0, same as index.html's pre-paint.
+    document.getElementById("meta-theme")?.setAttribute("content", theme === "light" ? "#f2f1ed" : "#0d0d0d");
   }, [theme]);
   return (
     <SegmentedButton
@@ -363,7 +366,7 @@ function Dashboard({ data }: { data: ReturnType<typeof useListings> }) {
         <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
           <div className="min-w-0">
             <div className="eyebrow">Used market · Germany · Austria · Hungary</div>
-            <h1 className="mt-1.5 text-[28px] font-bold leading-none tracking-tight text-primary">
+            <h1 className="display-serif mt-1.5 text-[30px] font-bold leading-none text-primary">
               Tesla {model === "model_y" ? "Model Y" : "Model 3"}
             </h1>
             {latestScrapeDate && <ScrapeFreshness date={latestScrapeDate} at={latestScrapeAt} />}
@@ -436,6 +439,15 @@ function Dashboard({ data }: { data: ReturnType<typeof useListings> }) {
           saleTimes={data.saleTimes}
         />
       </ErrorBoundary>
+
+      {/* A quiet colophon, so the page ends on purpose instead of just
+          stopping after the pagination buttons. */}
+      <footer className="mt-10 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 border-t border-border pb-3 pt-4 text-[11px] text-muted">
+        <span>
+          Asking prices from AutoScout24 · Kleinanzeigen · Használtautó.hu · Tesla.com — refreshed daily.
+        </span>
+        <span>Personal research dashboard, not affiliated with Tesla, Inc.</span>
+      </footer>
     </div>
   );
 }

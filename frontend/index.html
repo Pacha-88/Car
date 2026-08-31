@@ -3,11 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>car-tracker</title>
+    <title>Tesla Market Watch</title>
+    <meta name="description" content="Used Tesla Model Y & Model 3 asking prices across Germany, Austria and Hungary, refreshed daily." />
+    <!-- The page's own car silhouette (ListingPhoto.tsx), paper-on-ink in a
+         rounded badge so it reads on any tab bar in either OS theme. The
+         emoji it replaces was retired from the cards for reading as a toy;
+         the tab was still wearing it. -->
     <link
       rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%9A%97%3C/text%3E%3C/svg%3E"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%231b1b19'/%3E%3Cg transform='translate(9.2,31) scale(1.7)' fill='%23f2f1eb'%3E%3Cpath d='M1.5 13.2c0-2.4 1.8-3.5 4.4-3.9l4.6-.7 3.4-4A5.6 5.6 0 0 1 18.2 2.6h8c1.7 0 3.4.8 4.5 2.1l3.4 3.9 5.8.8c2.5.4 4.6 1.6 4.6 3.9v1c0 .9-.7 1.6-1.6 1.6h-2.2a4.9 4.9 0 0 0-9.6 0H16.9a4.9 4.9 0 0 0-9.6 0H3.1c-.9 0-1.6-.7-1.6-1.6v-1.1Z'/%3E%3Ccircle cx='12.1' cy='15.3' r='3' fill='%231b1b19'/%3E%3Ccircle cx='12.1' cy='15.3' r='1.3'/%3E%3Ccircle cx='35.9' cy='15.3' r='3' fill='%231b1b19'/%3E%3Ccircle cx='35.9' cy='15.3' r='1.3'/%3E%3C/g%3E%3C/svg%3E"
     />
+    <!-- Colours the browser's own chrome (mobile URL bar) to the page
+         plane. The pre-paint script below and ThemeToggle keep it in step
+         with the applied theme; these two values are the themes' surface-0. -->
+    <meta name="theme-color" id="meta-theme" content="#0d0d0d" />
   </head>
   <body>
     <script>
@@ -21,6 +30,9 @@
           theme = window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
         }
         document.documentElement.setAttribute("data-theme", theme);
+        // Keep in step with the two surface-0 values in index.css.
+        var meta = document.getElementById("meta-theme");
+        if (meta) meta.setAttribute("content", theme === "light" ? "#f2f1ed" : "#0d0d0d");
       } catch (e) {}
     </script>
     <div id="root"></div>
